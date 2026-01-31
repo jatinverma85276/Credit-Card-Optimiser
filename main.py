@@ -15,7 +15,7 @@ def save_session(state: AgentState) -> None:
     session_file = SESSION_DIR / f"{state.session_id}.json"
     with open(session_file, 'w') as f:
         # Convert to dict and handle any non-serializable fields
-        state_dict = state.dict()
+        state_dict = state.model_dump()
         # Convert datetime objects to ISO format
         for msg in state_dict.get('conversation_history', []):
             if 'timestamp' in msg:
@@ -85,6 +85,7 @@ def main():
                 
                 # Handle commands
                 if user_input.startswith('/'):
+                    print(user_input, "Internal UserInput")
                     cmd = user_input[1:].lower().split()[0]
                     
                     if cmd == 'exit':
@@ -128,14 +129,23 @@ def main():
                         continue
                 
                 # Add user message to history
+                print(user_input, "External UserInput")
                 state.add_user_message(user_input)
                 
                 # Process the message
                 state.raw_message = user_input
                 result = workflow.invoke(state)
+
+                print(result, "Result Message")
                 
+                print(result["formatted_recommendation"], "formatted_recommendation")
                 # Extract and display the response
-                if 'recommendation' in result and result['recommendation']:
+                if result["formatted_recommendation"]:
+                    # Use the formatted recommendation if available
+                    print(f"\nAssistant: {result["formatted_recommendation"]}")
+                    state.add_assistant_message(result["formatted_recommendation"])
+                elif 'recommendation' in result and result['recommendation']:
+                    # Fallback to basic recommendation display
                     response = result['recommendation'].get('reason', 'No specific recommendation available')
                     print(f"\nAssistant: {response}")
                     state.add_assistant_message(response)

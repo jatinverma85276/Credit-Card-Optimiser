@@ -1,5 +1,5 @@
 from app.llm.client import get_llm
-from app.llm.prompts import CARD_INGEST_PROMPT, PARSE_EXPENSE_PROMPT
+from app.llm.prompts import CARD_INGEST_PROMPT, FORMAT_RECOMMENDATION_PROMPT, PARSE_EXPENSE_PROMPT
 from app.models.expense import Expense
 from langgraph.graph import StateGraph, END
 from app.models.state import AgentState
@@ -73,6 +73,7 @@ def simulate_benefits_node(state: AgentState):
                 # TODO: cap handling (next step)
                 result["expected_return"] = round(cashback, 2)
                 result["details"] = f"{rule.percentage}% cashback"
+                result["reason"] = f"This card offers {rule.percentage}% cashback on {expense.category} purchases"
 
         simulations.append(result)
 
@@ -82,24 +83,80 @@ def simulate_benefits_node(state: AgentState):
 
 
 def decide_best_card_node(state: AgentState):
+    """
+    Decide which card to recommend based on the simulation results
+    """
     if not state.simulations:
         state.recommendation = {
-            "card": None,
-            "reason": "No eligible card found"
+            'card': 'No card',
+            'expected_return': 0,
+            'reason': 'No suitable card found for this expense.'
         }
         return state
-
-    best = max(
-        state.simulations,
-        key=lambda x: x["expected_return"]
-    )
-
+    
+    # Find the card with the highest return
+    best_card = max(state.simulations, key=lambda x: x['expected_return'])
+    
     state.recommendation = {
-        "card": best["card_name"],
-        "expected_return": best["expected_return"],
-        "reason": best["details"]
+        'card': best_card.get('card_name', 'a credit card'),
+        'expected_return': best_card.get('expected_return', 0),
+        'reason': best_card.get('reason', f"This card offers the best return for this purchase")
     }
+    
+    return state
 
+
+def format_recommendation_node(state: AgentState):
+    """
+    Format the recommendation into a user-friendly message using LLM
+    """
+    if not state.recommendation:
+        state.formatted_recommendation = "No recommendation available."
+        return state
+    
+    # Safely get recommendation details with defaults
+    recommendation = state.recommendation
+    card_name = recommendation.get('card', 'a credit card')
+    expected_return = recommendation.get('expected_return', 0)
+    reason = recommendation.get('reason', 'No specific reason provided')
+    
+    # If we have the raw expense, include it for better context
+    expense_details = ""
+    if hasattr(state, 'expense') and state.expense:
+        expense = state.expense
+        expense_details = f" for {expense.merchant} (₹{expense.amount:.2f})"
+    
+    llm = get_llm()
+    
+    try:
+        # Get the response from the LLM
+        response = llm.invoke(
+            FORMAT_RECOMMENDATION_PROMPT.format(
+                card=card_name,
+                expected_return=expected_return,
+                reason=reason,
+                expense_details=expense_details
+            )
+        )
+        
+        # Extract the content safely
+        if hasattr(response, 'content'):
+            state.formatted_recommendation = response.content
+        else:
+            # Fallback to a simple formatted message if LLM call fails
+            state.formatted_recommendation = (
+                f"I recommend using your {card_name} card{expense_details}. "
+                f"You can expect a return of {expected_return:.1f}% because {reason}"
+            )
+            
+    except Exception as e:
+        print(f"Error formatting recommendation: {e}")
+        # Fallback to a simple formatted message
+        state.formatted_recommendation = (
+            f"I recommend using your {card_name} card{expense_details}. "
+            f"You can expect a return of {expected_return:.1f}% because {reason}"
+        )
+    
     return state
 
 
@@ -181,9 +238,11 @@ def build_workflow():
     graph.add_node("normalize_expense", normalize_expense_node)
     graph.add_node("simulate", simulate_benefits_node)
     graph.add_node("decide", decide_best_card_node)
+    graph.add_node("format_recommendation", format_recommendation_node)
     graph.add_node("ingest_card", ingest_card_node)
+    graph.add_node("router", router_node)
 
-# Entry point
+    # Entry point
     graph.set_entry_point("router")
 
     # Define conditional edges
@@ -199,7 +258,8 @@ def build_workflow():
     graph.add_edge("load_memory", "normalize_expense")
     graph.add_edge("normalize_expense", "simulate")
     graph.add_edge("simulate", "decide")
-    graph.add_edge("decide", END)
+    graph.add_edge("decide", "format_recommendation")
+    graph.add_edge("format_recommendation", END)
     
     # Card ingestion workflow
     graph.add_edge("ingest_card", END)

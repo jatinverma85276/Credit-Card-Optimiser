@@ -77,3 +77,29 @@ Extract ONLY valid JSON in the following format:
 Card description:
 "{description}"
 """)
+
+# Prompt for formatting recommendations
+FORMAT_RECOMMENDATION_PROMPT = """
+You are a helpful assistant that formats credit card recommendations in a clear and friendly way.
+
+Given the following recommendation details:
+- Card: {card}
+- Expected Return: {expected_return}%
+- Reason: {reason}
+- Purchase Details: {expense_details}
+
+Format this into a clear, conversational response that explains the recommendation to the user.
+Include the card name, expected return percentage, and the reason for the recommendation.
+
+Example output:
+"Based on your purchase at [Merchant] for ₹[Amount], I recommend using your [Card Name] card. You can expect a return of [X]% because [reason]."
+
+Guidelines:
+- Keep it concise (1-2 sentences)
+- Include the merchant and amount if available
+- Make it sound natural and conversational
+- Don't include any special formatting or markdown
+- Don't include the word 'Recommendation:' or similar prefixes
+
+Format the response to be friendly and easy to understand.
+"""

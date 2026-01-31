@@ -19,7 +19,9 @@ class AgentState(BaseModel):
     card_stats: Dict[str, Any] = {}
     simulations: List[Dict[str, Any]] = []
     recommendation: Optional[Dict[str, Any]] = None
+    formatted_recommendation: Optional[str] = None
     conversation_history: List[Message] = Field(default_factory=list)
+    next_flow: str = "llm_parse_expense"  # Default flow for normal expense processing
     
     def add_user_message(self, message: str):
         self.conversation_history.append(Message(role="user", content=message))
