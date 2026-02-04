@@ -1,7 +1,7 @@
 import json
 from sqlalchemy.orm import Session
 from app.db.models import CreditCardModel
-from app.graph.schemas import CreditCard
+from app.schemas.credit_card import CreditCard
 
 def add_card(db: Session, card: CreditCard):
     db_card = CreditCardModel(

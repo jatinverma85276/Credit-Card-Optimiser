@@ -5,10 +5,15 @@ from app.graph.state import GraphState
 from app.graph.nodes import (
     add_card_node,
     card_parser_node,
+    decision_node,
     expense_decision_node,
+    fetch_user_cards_node,
     finance_router_node,
+    llm_recommendation_node,
+    reward_calculation_node,
     router_node,
-    general_llm_node
+    general_llm_node,
+    transaction_parser_node
 )
 
 # def build_graph():
@@ -39,6 +44,12 @@ def build_graph():
     builder.add_node("finance_expense", expense_decision_node)
     builder.add_node("general_agent", general_llm_node)
 
+    builder.add_node("transaction_parser", transaction_parser_node)
+    builder.add_node("fetch_cards", fetch_user_cards_node)
+    builder.add_node("reward_calculation", reward_calculation_node)
+    builder.add_node("decision", decision_node)
+    builder.add_node("llm_recommendation", llm_recommendation_node)
+
     builder.set_entry_point("router")
 
     # Level 1 routing
@@ -61,9 +72,15 @@ def build_graph():
         }
     )
     
+    builder.add_edge("finance_expense", "transaction_parser")
+    builder.add_edge("transaction_parser", "fetch_cards")
+    builder.add_edge("fetch_cards", "reward_calculation")
+    builder.add_edge("reward_calculation", "decision")
+    builder.add_edge("decision", "llm_recommendation")
+    builder.add_edge("llm_recommendation", END)
+
     builder.add_edge("card_parser", "add_card")
     builder.add_edge("add_card", END)
-    builder.add_edge("finance_expense", END)
     builder.add_edge("general_agent", END)
 
     return builder.compile()

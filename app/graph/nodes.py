@@ -3,25 +3,20 @@
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import AIMessage
 from langchain_core.messages import SystemMessage
+from app.schemas.transaction import Transaction
 from app.db.database import SessionLocal
-from app.graph.schemas import CreditCard
+from app.schemas.credit_card import CreditCard
 from app.graph.state import GraphState
 from dotenv import load_dotenv
 from pprint import pprint
-
+import sqlite3
+import json
 from app.db.card_repository import add_card
+from app.utils.CONSTANTS import FINANCE_KEYWORDS
 
 load_dotenv()
 
 llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.2)
-
-FINANCE_KEYWORDS = {
-    "expense", "expenses",
-    "card", "cards",
-    "category", "categories",
-    "reward", "rewards",
-    "cashback"
-}
 
 # -------------------------
 # Router Node
@@ -221,5 +216,336 @@ def add_card_node(state: GraphState) -> GraphState:
         **state,
         "messages": state["messages"] + [
             AIMessage(content=f"✅ {card_dict['card_name']} added successfully to your cards database.")
+        ]
+    }
+
+
+# -------------------------
+# Add Card Agent
+# -------------------------
+TRANSACTION_PARSER_PROMPT = """
+You are a financial transaction extraction engine.
+
+Extract the transaction into STRICT JSON.
+
+Rules:
+- Do not guess the amount.
+- Convert values like "12k", "1 lakh", "500rs" into numbers.
+- Merchant must be a brand/platform if mentioned.
+- Infer category only if obvious (Swiggy → food, Uber → travel).
+- Return valid JSON only.
+- Use null if unknown.
+"""
+
+def transaction_parser_node(state: GraphState) -> GraphState:
+
+    raw_text = state["messages"][-1].content.strip()
+
+    structured_llm = llm.with_structured_output(Transaction)
+
+    parsed_txn: Transaction = structured_llm.invoke([
+        SystemMessage(content=TRANSACTION_PARSER_PROMPT),
+        raw_text
+    ])
+    # print(state, "State")
+    # print(parsed_txn.model_dump(), "Parsed Transaction")
+
+    return {
+        **state,
+        "parsed_transaction": parsed_txn,
+        "messages": state["messages"] + [
+            AIMessage(content="Transaction parsed successfully.")
+        ]
+    }
+
+
+
+# -------------------------
+# Fetch User Cards Agent
+# -------------------------
+from app.schemas.credit_card import CreditCard, RewardRule, Milestone, Eligibility  # Import your Pydantic models
+
+def fetch_user_cards_node(state: GraphState) -> GraphState:
+    conn = sqlite3.connect("cards.db")
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT * FROM credit_cards")
+    rows = cursor.fetchall()
+    
+    # DEBUG: Print actual column names to confirm schema
+    # if len(rows) > 0:
+    #     print("Available Columns:", rows[0].keys())
+
+    cards = []
+
+    for row in rows:
+        try:
+            # 1. Deserialize the nested JSON fields first
+            # We use json.loads() because raw SQLite returns these as strings
+            reward_rules_data = json.loads(row["reward_rules"]) if row["reward_rules"] else []
+            excluded_data = json.loads(row["excluded_categories"]) if row["excluded_categories"] else []
+            benefits_data = json.loads(row["key_benefits"]) if row["key_benefits"] else []
+            
+            # Handle new fields if you added them (Milestones, Eligibility)
+            milestones_data = json.loads(row["milestone_benefits"]) if "milestone_benefits" in row.keys() and row["milestone_benefits"] else []
+            eligibility_data = json.loads(row["eligibility_criteria"]) if "eligibility_criteria" in row.keys() and row["eligibility_criteria"] else None
+
+            # 2. Reconstruct the Pydantic Object
+            card = CreditCard(
+                card_name=row["card_name"],
+                issuer=row["issuer"],
+                card_type=row["card_type"],
+                annual_fee=row["annual_fee"],
+                fee_waiver_condition=row["fee_waiver_condition"],
+                welcome_bonus=row["welcome_bonus"],
+                reward_program_name=row["reward_program_name"], # Note: we renamed this column earlier
+                
+                # Pass the parsed lists/dicts
+                reward_rules=[RewardRule(**r) for r in reward_rules_data],
+                milestone_benefits=[Milestone(**m) for m in milestones_data],
+                eligibility_criteria=Eligibility(**eligibility_data) if eligibility_data else None,
+                excluded_categories=excluded_data,
+                key_benefits=benefits_data,
+                
+                liability_policy=row["liability_policy"] if "liability_policy" in row.keys() else None
+            )
+            
+            cards.append(card)
+
+        except Exception as e:
+            print(f"Failed to parse card '{row['card_name']}':", e)
+            import traceback
+            traceback.print_exc() # Helps see exactly which field failed
+
+    conn.close()
+
+    # print(f"\n✅ Loaded {cards} cards")
+
+    return {
+        **state,
+        "available_cards": cards,
+        "messages": state["messages"] + [
+            AIMessage(content=f"Fetched {len(cards)} cards.")
+        ]
+    }
+
+
+
+# -------------------------
+# Reward Calculation Agent
+# -------------------------
+import re
+from langchain_core.messages import AIMessage
+
+def reward_calculation_node(state: GraphState) -> GraphState:
+    txn = state.get("parsed_transaction")
+    cards = state.get("available_cards", [])
+
+    if not txn:
+        raise ValueError("Transaction missing in state")
+    
+    if not cards:
+        return {**state, "messages": state["messages"] + [AIMessage(content="No cards found.")]}
+
+    # Normalize inputs
+    merchant_input = txn.merchant.lower().strip()
+    amount = float(txn.amount)
+
+    best_card = None
+    best_points = -1
+    breakdown = []
+
+    for card in cards:
+        # --- 1. EXCLUSIONS ---
+        exclusions = [e.lower() for e in card.excluded_categories] if card.excluded_categories else []
+        if txn.category.lower() in exclusions or merchant_input in exclusions:
+            breakdown.append({
+                "card_name": card.card_name,
+                "points": 0,
+                "category": "Excluded",
+                "reason": "Matches exclusion"
+            })
+            continue
+
+        # --- 2. FIND BEST MATCHING RULE ---
+        applied_multiplier = 1.0
+        applied_category = "Base Reward"
+        
+        # Sort: Specific merchants first, "All" last
+        sorted_rules = sorted(
+            card.reward_rules, 
+            key=lambda r: "all" in [m.lower() for m in r.merchants]
+        )
+
+        for rule in sorted_rules:
+            rule_merchants = [m.lower() for m in rule.merchants]
+            
+            # --- MATCHING LOGIC (The Fix) ---
+            match_found = False
+            
+            # 1. Generic Match
+            if "all" in rule_merchants:
+                match_found = True
+            
+            # 2. Specific Match (Exact or Substring)
+            # Check if any DB merchant (e.g. 'nykaa') is inside User Input (e.g. 'nykaa man')
+            # OR if User Input (e.g. 'uber') is inside DB merchant (e.g. 'uber eats')
+            else:
+                for rm in rule_merchants:
+                    if rm in merchant_input or merchant_input in rm:
+                        match_found = True
+                        break
+
+            if match_found:
+                raw_mult = str(rule.multiplier).strip()
+                
+                # --- PARSING LOGIC ---
+                try:
+                    if "x" in raw_mult.lower():
+                        applied_multiplier = float(raw_mult.lower().replace("x", "").strip())
+                    elif "%" in raw_mult:
+                        # Treating 1% approx equal to 1 Point for comparison
+                        applied_multiplier = float(raw_mult.replace("%", "").strip())
+                    else:
+                        # Regex extraction for "2 travel credits..."
+                        match = re.search(r"(\d+(\.\d+)?)", raw_mult)
+                        applied_multiplier = float(match.group(1)) if match else 1.0
+
+                except Exception:
+                    applied_multiplier = 1.0
+
+                applied_category = rule.category
+                
+                # If this was a SPECIFIC match (not "all"), we stop looking.
+                # If it was "all", we keep looking in case a specific rule exists later?
+                # Actually, since we sorted "All" to the bottom, if we hit "All" here, 
+                # it means we already missed the specific ones. 
+                # BUT: Since we are iterating *sorted* list where "All" is last, 
+                # if we hit a specific match, we should break immediately.
+                if "all" not in rule_merchants:
+                    break 
+
+        # --- 3. CALCULATION ---
+        points = (amount / 50) * applied_multiplier
+
+        breakdown.append({
+            "card_name": card.card_name,
+            "multiplier": applied_multiplier,
+            "category": applied_category,
+            "points": round(points, 2)
+        })
+
+        if points > best_points:
+            best_points = points
+            best_card = card
+
+    if best_card:
+        msg = f"Best choice: **{best_card.card_name}**.\nEarn approx **{int(best_points)} points** ({breakdown[-1]['category']})."
+    else:
+        msg = "No suitable card found."
+
+    return {
+        **state,
+        "best_card": best_card,
+        "reward_breakdown": breakdown,
+        "messages": state["messages"] + [AIMessage(content=msg)]
+    }
+
+
+
+
+# -------------------------
+# Decision Agent
+# -------------------------
+def decision_node(state: GraphState) -> GraphState:
+
+    txn = state["parsed_transaction"]
+    best_card = state.get("best_card")
+    breakdown = state.get("reward_breakdown", [])
+
+    # Safety check
+    if not best_card:
+        return {
+            **state,
+            "messages": state["messages"] + [
+                AIMessage(content="I couldn't find a suitable card for this transaction.")
+            ]
+        }
+
+    merchant = txn.merchant
+    amount = txn.amount
+
+    # Find best card points
+    best_entry = next(
+        (b for b in breakdown if b["card_name"] == best_card.card_name),
+        None
+    )
+
+    points = round(best_entry["points"], 2)
+    multiplier = best_entry["multiplier"]
+    category = best_entry["category"]
+
+    response = f"""
+💳 **Best Card Recommendation**
+
+Use **{best_card.card_name}** for this transaction at **{merchant}**.
+
+🎯 You'll earn approximately **{points} reward points**  
+⚡ Reward Rate: **{multiplier}x** ({category})
+
+Smart choice for maximizing rewards!
+"""
+
+    return {
+        **state,
+        "messages": state["messages"] + [
+            AIMessage(content=response)
+        ]
+    }
+
+
+
+
+# -------------------------
+# LLM Recommendation Agent
+# -------------------------
+def llm_recommendation_node(state: GraphState) -> GraphState:
+
+    best_card = state["best_card"]
+    txn = state["parsed_transaction"]
+    breakdown = state["reward_breakdown"]
+
+    best_entry = next(
+        b for b in breakdown if b["card_name"] == best_card.card_name
+    )
+
+    prompt = f"""
+            You are a smart financial assistant.
+
+            Explain the credit card recommendation clearly.
+
+                Transaction:
+                - Merchant: {txn.merchant}
+                - Amount: ₹{txn.amount}
+
+                Best Card:
+                - Card: {best_card.card_name}
+                - Reward Multiplier: {best_entry['multiplier']}x
+                - Estimated Points: {round(best_entry['points'],2)}
+
+                Keep it:
+                ✔ Clear
+                ✔ Professional
+                ✔ Helpful
+                ✔ Not too long
+            """
+
+    response = llm.invoke(prompt)
+
+    return {
+        **state,
+        "messages": state["messages"] + [
+            response
         ]
     }

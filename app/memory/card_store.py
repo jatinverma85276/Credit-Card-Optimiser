@@ -1,5 +1,5 @@
 from typing import Dict
-from app.graph.schemas import CreditCard
+from app.schemas.credit_card import CreditCard
 
 CARD_STORE: Dict[str, CreditCard] = {}
 
