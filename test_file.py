@@ -1,12 +1,14 @@
 import sqlite3
 
-conn = sqlite3.connect("cards.db")  # adjust path if needed
+conn = sqlite3.connect("cards.db")
 cursor = conn.cursor()
 
-cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
-cursor.execute("SELECT * FROM credit_cards")
-tables = cursor.fetchall()
+cursor.execute("""
+    DELETE FROM credit_cards
+    WHERE rowid = (
+        SELECT MAX(rowid) FROM credit_cards
+    )
+""")
 
-print("Tables found:", tables)
-
+conn.commit()
 conn.close()

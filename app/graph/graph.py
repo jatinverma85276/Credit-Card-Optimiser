@@ -1,7 +1,9 @@
 # app/graph/graph.py
-
+import sqlite3
+from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.graph import StateGraph, END
 from app.graph.state import GraphState
+from typing import Literal
 from app.graph.nodes import (
     add_card_node,
     card_parser_node,
@@ -15,6 +17,12 @@ from app.graph.nodes import (
     general_llm_node,
     transaction_parser_node
 )
+
+# 1. Setup Persistent Checkpointer Connection
+# We use a context manager in the main execution block usually, 
+# but for a script, we can open it globally or pass it in.
+conn = sqlite3.connect("checkpoints.db", check_same_thread=False)
+memory = SqliteSaver(conn)
 
 # def build_graph():
 #     builder = StateGraph(GraphState)
@@ -30,6 +38,18 @@ def route_selector(state: GraphState) -> str:
 
 def finance_route_selector(state: GraphState) -> str:
     return state["finance_route"]
+
+def route_after_parser(state: GraphState) -> Literal["add_card", "__end__"]:
+    """
+    Decides whether to proceed to adding the card to DB 
+    or stop if parsing failed/was skipped.
+    """
+    if state.get("parsed_card"):
+        return "add_card"
+    
+    # If None (because input was empty or invalid), stop here.
+    # The user has already received the "Please paste details..." message.
+    return "__end__"
 
 
 def build_graph():
@@ -71,6 +91,15 @@ def build_graph():
             "expense": "finance_expense"
         }
     )
+
+    builder.add_conditional_edges(
+        "card_parser",          # From this node
+        route_after_parser,     # Run this logic
+        {                       # Map logic output to next node
+            "add_card": "add_card",
+            "__end__": END
+        }
+    )
     
     builder.add_edge("finance_expense", "transaction_parser")
     builder.add_edge("transaction_parser", "fetch_cards")
@@ -79,8 +108,8 @@ def build_graph():
     builder.add_edge("decision", "llm_recommendation")
     builder.add_edge("llm_recommendation", END)
 
-    builder.add_edge("card_parser", "add_card")
-    builder.add_edge("add_card", END)
+    # builder.add_edge("card_parser", "add_card")
+    # builder.add_edge("add_card", END)
     builder.add_edge("general_agent", END)
 
-    return builder.compile()
+    return builder.compile(checkpointer=memory)

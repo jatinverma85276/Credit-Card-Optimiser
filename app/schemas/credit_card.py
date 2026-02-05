@@ -22,6 +22,7 @@ class Eligibility(BaseModel):
     other_conditions: Optional[List[str]] = Field(None, description="E.g., 'Company trading > 12 months'")
 
 class CreditCard(BaseModel):
+    extracted_from_user: bool = Field(..., description="Set to FALSE if the user input was empty, generic, or lacked specific card details.")
     card_name: str
     issuer: str
     card_type: str

@@ -152,31 +152,64 @@ def expense_decision_node(state: GraphState) -> GraphState:
 #   Card Parser Agent
 # -------------------------
 CARD_EXTRACTION_PROMPT = """
-You are a specialized Credit Card Data Analyst. Your job is to extract highly detailed, accurate structured data from credit card terms.
+You are a STRICT Financial Data Extractor. Your goal is to map unstructured text to a structured schema with 100% fidelity to the source text.
 
-### INSTRUCTIONS:
-1. **Analyze Footnotes:** Critical data (like spend caps, specific exclusions, and split categories) is often hidden in footnotes (e.g., "1", "2"). You MUST integrate this data into the main fields.
-2. **Split Reward Buckets:** If a single category (like "10X Rewards") has different capping rules for different merchant groups (e.g., Group A is capped at 500, Group B is capped at 500), create **separate** `RewardRule` entries for each group.
-3. **Capture Eligibility:** Extract income, age, and location constraints into the `eligibility_criteria` section.
-4. **Milestones:** If the text says "Spend X to get Y", map this to `milestone_benefits`, not just `key_benefits`.
-5. **Exclusions:** Be specific. If EMI is excluded only at "Point of Sale" but allowed elsewhere, mention that specific nuance.
+### CORE PHILOSOPHY:
+1. **NO INFERENCE:** If the user says "5% on travel", extract exactly that. Do NOT infer "Foreign Transaction Fee Waiver" unless explicitly stated.
+2. **NO AUTOFILL:** Do not fill in generic data (like "18 years old" or "Indian Resident") unless the text explicitly mentions these criteria.
+3. **NO GUESSING:** If a field (like `annual_fee`) is missing from the text, return `null`. Do not guess based on similar cards.
+
+### DATA HANDLING RULES:
+1. **Analyze Footnotes:** Critical data (caps, specific exclusions) is often hidden in footnotes (e.g., "1", "2"). You MUST integrate this data into the main fields.
+2. **Split Reward Buckets:** If a single category (like "10X Rewards") has different caps for different merchant groups (e.g., "Group A capped at 500, Group B capped at 500"), create **separate** `RewardRule` entries.
+3. **Capture Eligibility:** Extract income, age, and location constraints into `eligibility_criteria` ONLY if explicitly mentioned.
+4. **Milestones:** Map "Spend X to get Y" logic to `milestone_benefits`.
+5. **Exclusions:** Be specific. If EMI is excluded only at "Point of Sale", record that nuance.
+
+### VALIDATION & FAILURE HANDLING:
+- **`extracted_from_user` Flag:** - Set to `true` IF the text contains specific, identifiable credit card terms (e.g., specific reward rates, fee amounts, or unique benefit names).
+  - Set to `false` IF the input is vague, generic, or lacks sufficient detail to identify a specific financial product (e.g., "I want a travel card" or "Show me Amex cards").
 
 ### OUTPUT FORMAT:
-Return strictly valid JSON matching the provided schema. Use `null` for missing fields. 
+Return strictly valid JSON matching the provided schema. 
 """
 
 def card_parser_node(state: GraphState) -> GraphState:
     raw_text = state["messages"][-1].content.replace("/add_card", "").strip()
 
+    # 2. CRITICAL CHECK: If text is empty, ask user for details
+    if not raw_text:
+        return {
+            **state,
+            "parsed_card": None,
+            "messages": state["messages"] + [
+                AIMessage(content="Please paste the credit card details or terms and conditions after the command. \nExample: `/add_card American Express SmartEarn terms...`")
+            ]
+        }
+
+    # 3. Proceed only if text exists
+    # print("Raw text:", raw_text)
+
     structured_llm = llm.with_structured_output(CreditCard)
+
+    # print("Structured LLM:", structured_llm)
 
     card_data: CreditCard = structured_llm.invoke([
         SystemMessage(content=ADD_CARD_SYSTEM_PROMPT),
         raw_text
     ])
     
+    if not card_data.extracted_from_user:
+         return {
+            **state,
+            "parsed_card": None,
+            "messages": state["messages"] + [
+                AIMessage(content="I couldn't find any valid credit card details in your message. Please provide the full terms or features.")
+            ]
+        }
     parsed_card = card_data  # JSON string or parsed dict
     # print("\n--- Parsed Card Data ---")
+    # print(parsed_card, "Parsed Card")
     # pprint(parsed_card.dict() if hasattr(parsed_card, "dict") else parsed_card)
     # print("------------------------\n")
 
@@ -221,7 +254,7 @@ def add_card_node(state: GraphState) -> GraphState:
 
 
 # -------------------------
-# Add Card Agent
+# Transaction Parser Agent
 # -------------------------
 TRANSACTION_PARSER_PROMPT = """
 You are a financial transaction extraction engine.
