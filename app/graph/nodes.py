@@ -543,42 +543,191 @@ Smart choice for maximizing rewards!
 # -------------------------
 # LLM Recommendation Agent
 # -------------------------
+# def llm_recommendation_node(state: GraphState) -> GraphState:
+
+#     best_card = state["best_card"]
+#     txn = state["parsed_transaction"]
+#     breakdown = state["reward_breakdown"]
+
+#     best_entry = next(
+#         b for b in breakdown if b["card_name"] == best_card.card_name
+#     )
+
+#     prompt = f"""
+#             You are a smart financial assistant.
+
+#             Explain the credit card recommendation clearly.
+
+#                 Transaction:
+#                 - Merchant: {txn.merchant}
+#                 - Amount: ₹{txn.amount}
+
+#                 Best Card:
+#                 - Card: {best_card.card_name}
+#                 - Reward Multiplier: {best_entry['multiplier']}x
+#                 - Estimated Points: {round(best_entry['points'],2)}
+
+#                 Keep it:
+#                 ✔ Clear
+#                 ✔ Professional
+#                 ✔ Helpful
+#                 ✔ Not too long
+#             """
+
+#     response = llm.invoke(prompt)
+
+#     return {
+#         **state,
+#         "messages": state["messages"] + [
+#             response
+#         ]
+#     }
+
+# -------------------------
+# LLM Recommendation Agent (Fixed)
+# # -------------------------
+# LLM Recommendation Agent (Comparison Optimized)
+# -------------------------
 def llm_recommendation_node(state: GraphState) -> GraphState:
 
-    best_card = state["best_card"]
-    txn = state["parsed_transaction"]
-    breakdown = state["reward_breakdown"]
+    # 1. Extract Context
+    txn = state.get("parsed_transaction")
+    breakdown = state.get("reward_breakdown", [])
+    
+    # CRITICAL: Get the user's specific question
+    user_query = state["messages"][-1].content
 
-    best_entry = next(
-        b for b in breakdown if b["card_name"] == best_card.card_name
-    )
+    # 2. Prepare Data String
+    breakdown_text = ""
+    for item in breakdown:
+        breakdown_text += (
+            f"- {item['card_name']}: {round(item['points'], 2)} Points "
+            f"(Multiplier: {item['multiplier']}x | Category: {item['category']})\n"
+        )
+    
+    if not breakdown_text:
+        breakdown_text = "No cards matched for this transaction."
 
+    # 3. The "Comparison-First" Prompt
     prompt = f"""
-            You are a smart financial assistant.
+    You are a Credit Card Strategy Expert.
 
-            Explain the credit card recommendation clearly.
+    ### DATA (Calculated Rewards)
+    {breakdown_text}
 
-                Transaction:
-                - Merchant: {txn.merchant}
-                - Amount: ₹{txn.amount}
+    ### TRANSACTION
+    Merchant: {txn.merchant if txn else 'Unknown'} | Amount: ₹{txn.amount if txn else 0}
 
-                Best Card:
-                - Card: {best_card.card_name}
-                - Reward Multiplier: {best_entry['multiplier']}x
-                - Estimated Points: {round(best_entry['points'],2)}
+    ### USER QUESTION
+    "{user_query}"
 
-                Keep it:
-                ✔ Clear
-                ✔ Professional
-                ✔ Helpful
-                ✔ Not too long
-            """
+    ### STRICT RESPONSE RULES:
+    1. **IF "COMPARE" IS ASKED:** - DO NOT simply list all cards.
+       - Identify the SPECIFIC cards the user asked about (e.g., "IDFC" and "Flipkart").
+       - Create a "Head-to-Head" comparison for ONLY those cards.
+       - Example: "The Flipkart SBI earns 750 pts (7.5x), whereas IDFC Select earns only 300 pts (3x). This makes Flipkart 2.5x more rewarding."
 
+    2. **IF "BEST CARD" IS ASKED:**
+       - Announce the winner clearly.
+       - Briefly list the runners-up.
+
+    3. **Tone:**
+       - Be direct. Avoid generic filler like "Based on your transaction..."
+       - Start immediately with the answer.
+    """
+
+    # 4. Invoke LLM
     response = llm.invoke(prompt)
 
     return {
         **state,
-        "messages": state["messages"] + [
-            response
-        ]
+        "messages": state["messages"] + [response]
     }
+
+# -------------------------
+# LLM Recommendation Agent (Comparison Logic Fixed)
+# -------------------------
+# def llm_recommendation_node(state: GraphState) -> GraphState:
+
+#     # 1. Extract Context
+#     txn = state.get("parsed_transaction")
+#     breakdown = state.get("reward_breakdown", [])
+#     user_query = state["messages"][-1].content.lower() # Normalize to lowercase
+
+#     # 2. INTENT DETECTION: Check if user wants to "Compare"
+#     is_comparison = "compare" in user_query or "difference" in user_query or "vs" in user_query
+
+#     # 3. FILTER DATA (If Comparison)
+#     # If the user asks "Compare IDFC and Flipkart", we try to find those specific cards.
+#     # Otherwise, we show all cards.
+    
+#     selected_cards_text = ""
+    
+#     if is_comparison:
+#         # Simple keyword matching to find which cards to compare
+#         relevant_items = []
+#         for item in breakdown:
+#             # Check if card name matches any word in user query (e.g., "idfc", "flipkart")
+#             card_name_lower = item['card_name'].lower()
+#             if any(word in card_name_lower for word in user_query.split()):
+#                 relevant_items.append(item)
+        
+#         # If we found matches, only show those. If not, show all (fallback).
+#         items_to_show = relevant_items if relevant_items else breakdown
+#         header = "### TARGET CARDS FOR COMPARISON"
+#     else:
+#         items_to_show = breakdown
+#         header = "### CALCULATED REWARDS (LEADERBOARD)"
+
+#     # 4. Build the Data String
+#     for item in items_to_show:
+#         selected_cards_text += (
+#             f"- {item['card_name']}: {round(item['points'], 2)} Points "
+#             f"(Multiplier: {item['multiplier']}x | Category: {item['category']})\n"
+#         )
+    
+#     if not selected_cards_text:
+#         selected_cards_text = "No cards matched for this transaction."
+
+#     # 5. DYNAMIC PROMPT SELECTION
+#     if is_comparison:
+#         # --- MODE A: COMPARISON ---
+#         prompt = f"""
+#         You are a Credit Card Analyst. The user wants a HEAD-TO-HEAD comparison.
+
+#         {header}
+#         {selected_cards_text}
+
+#         ### USER QUESTION
+#         "{state["messages"][-1].content}"
+
+#         ### INSTRUCTION
+#         1. **IGNORE THE 'WINNER'.** Do not just say who won.
+#         2. **COMPARE:** Explain the difference in points/multiplier between the specific cards listed above.
+#         3. **VERDICT:** Conclude with "Card A is X times better than Card B for this purchase."
+#         """
+#     else:
+#         # --- MODE B: RECOMMENDATION (Standard) ---
+#         prompt = f"""
+#         You are a Credit Card Expert. Recommend the best card.
+
+#         {header}
+#         {selected_cards_text}
+
+#         ### TRANSACTION
+#         Merchant: {txn.merchant if txn else 'Unknown'} | Amount: ₹{txn.amount if txn else 0}
+
+#         ### INSTRUCTION
+#         1. Announce the Winner clearly.
+#         2. List runners-up briefly.
+#         3. Explain WHY the winner is best (e.g., "7.5x reward rate").
+#         """
+
+#     # 6. Invoke LLM
+#     print(f"DEBUG: Comparison Mode = {is_comparison}")
+#     response = llm.invoke(prompt)
+
+#     return {
+#         **state,
+#         "messages": state["messages"] + [response]
+#     }
