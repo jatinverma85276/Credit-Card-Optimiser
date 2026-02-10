@@ -88,15 +88,13 @@ python main.py
 
 ```
 You: /add_card
-Agent: Please paste the credit card details in the following format:
-- Card Name:
-- Bank:
-- Reward Type:
-- Annual Fee:
-- Cashback Rate:
-- Points Rate:
-- Miles Rate:
-- Categories:
+Agent: Please paste the credit card details from any website or source. I can extract the relevant information from:
+- Card descriptions
+- Terms and conditions
+- Marketing materials
+- Any text containing card details
+
+Just copy and paste the information, and I'll handle the parsing!
 ```
 
 ### Expense Analysis
