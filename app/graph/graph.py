@@ -4,6 +4,7 @@ from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.graph import StateGraph, END
 from app.graph.state import GraphState
 from typing import Literal
+from IPython.display import Image, display
 from app.graph.nodes import (
     add_card_node,
     card_parser_node,
@@ -112,4 +113,12 @@ def build_graph():
     # builder.add_edge("add_card", END)
     builder.add_edge("general_agent", END)
 
-    return builder.compile(checkpointer=memory)
+    graph = builder.compile(checkpointer=memory)
+
+    # graph_png = graph.get_graph().draw_mermaid_png()
+
+    # with open("graph.png", "wb") as f:
+    #     f.write(graph_png)
+
+    return graph
+    # return builder.compile(checkpointer=memory)
