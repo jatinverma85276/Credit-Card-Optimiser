@@ -36,7 +36,8 @@ User Input → Router → Finance Router → [Card Management | Expense Analysis
 - **LangGraph**: Stateful graph-based agent framework
 - **LangChain**: LLM integration and orchestration
 - **OpenAI GPT-4o-mini**: Language model for intelligent responses
-- **SQLite**: Database for persistent storage (cards and checkpoints)
+- **PostgreSQL**: Production database for persistent storage (cards and checkpoints)
+- **SQLite**: Legacy database (migrated to PostgreSQL)
 - **Pydantic**: Data validation and serialization
 - **Python**: Core programming language
 
@@ -44,6 +45,7 @@ User Input → Router → Finance Router → [Card Management | Expense Analysis
 
 - Python 3.8+
 - OpenAI API key
+- PostgreSQL database server
 - Git
 
 ## 🚀 Quick Start
@@ -68,15 +70,31 @@ source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-### 4. Configure Environment Variables
+### 4. Set Up PostgreSQL Database
+
+Create a PostgreSQL database for the application:
+
+```sql
+-- Connect to PostgreSQL as superuser
+CREATE DATABASE credit_card_ai;
+```
+
+### 5. Configure Environment Variables
 
 Create a `.env` file in the root directory:
 
 ```env
 OPENAI_API_KEY=your_openai_api_key_here
+
+# PostgreSQL Database Configuration
+DB_HOST=localhost
+DB_PORT=5432
+DB_USER=postgres
+DB_PASSWORD=your_postgres_password
+DB_NAME=credit_card_ai
 ```
 
-### 5. Run the Application
+### 6. Run the Application
 
 ```bash
 python main.py
@@ -128,8 +146,9 @@ Langgraph/
 ├── main.py                 # CLI application entry point
 ├── requirements.txt        # Python dependencies
 ├── .env                   # Environment variables (create this)
-├── cards.db               # SQLite database for cards
-└── checkpoints.db         # SQLite database for conversation memory
+├── migrate_sqlite_to_postgres.py  # Database migration script
+├── cards.db               # Legacy SQLite database (deprecated)
+└── checkpoints.db         # Legacy SQLite checkpoint storage (deprecated)
 ```
 
 ## 🔧 Configuration
@@ -137,13 +156,37 @@ Langgraph/
 ### Environment Variables
 
 - `OPENAI_API_KEY`: Your OpenAI API key (required)
+- `DB_HOST`: PostgreSQL server host (default: localhost)
+- `DB_PORT`: PostgreSQL server port (default: 5432)
+- `DB_USER`: PostgreSQL username (default: postgres)
+- `DB_PASSWORD`: PostgreSQL password (required)
+- `DB_NAME`: PostgreSQL database name (default: credit_card_ai)
 
 ### Database Setup
 
-The application automatically creates SQLite databases on first run:
+#### PostgreSQL (Recommended)
 
-- `cards.db`: Stores credit card information
-- `checkpoints.db`: Stores conversation history and state
+The application now uses PostgreSQL for production deployment:
+
+- **Cards Database**: Stores credit card information in PostgreSQL
+- **Checkpoint Storage**: Conversation history and state in PostgreSQL
+- **Migration**: Use `migrate_sqlite_to_postgres.py` to migrate from SQLite
+
+#### SQLite (Legacy)
+
+Legacy SQLite databases are still included for backward compatibility:
+
+- `cards.db`: Legacy credit card storage
+- `checkpoints.db`: Legacy conversation memory
+
+### Database Migration
+
+If you have existing SQLite data and want to migrate to PostgreSQL:
+
+```bash
+# Ensure PostgreSQL is running and database exists
+python migrate_sqlite_to_postgres.py
+```
 
 ## 🎯 Key Commands
 
@@ -203,15 +246,16 @@ Credit cards are stored with the following key fields:
 
 ### Memory Management
 
-The system uses LangGraph's checkpoint system to maintain conversation context across sessions, enabling personalized and context-aware interactions.
+The system uses LangGraph's PostgreSQL-based checkpoint system to maintain conversation context across sessions, enabling personalized and context-aware interactions with persistent storage.
 
 ## 🐛 Troubleshooting
 
 ### Common Issues
 
 1. **API Key Error**: Ensure your OpenAI API key is correctly set in `.env`
-2. **Database Lock**: Restart the application if database locks occur
-3. **Memory Issues**: Clear `checkpoints.db` if conversation memory becomes corrupted
+2. **PostgreSQL Connection**: Verify PostgreSQL is running and credentials are correct
+3. **Database Migration**: If migrating from SQLite, ensure PostgreSQL database exists first
+4. **Memory Issues**: Clear PostgreSQL checkpoint table if conversation memory becomes corrupted
 
 ### Debug Mode
 

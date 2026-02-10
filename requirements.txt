@@ -4,3 +4,5 @@ langchain-openai
 python-dotenv
 sqlalchemy
 pydantic
+langgraph-checkpoint-postgres 
+psycopg2-binary

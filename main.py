@@ -1,6 +1,8 @@
 import uuid
 from langchain_core.messages import HumanMessage
 from app.graph.graph import build_graph
+from langgraph.checkpoint.postgres import PostgresSaver
+from app.db.database import DATABASE_URL
 
 # graph = build_graph()
 
@@ -16,9 +18,8 @@ from app.graph.graph import build_graph
 
 # Build graph (now with memory attached)
 
-graph = build_graph()
 
-def run_cli():
+def run_cli(graph):
     print("\n💳 Credit Card Optimiser Agent (with Memory)")
     print("Type 'exit' to quit.\n")
 
@@ -27,7 +28,8 @@ def run_cli():
     thread_id = str(uuid.uuid4())
     
     # 2. Config dictionary tells the graph which memory to load
-    config = {"configurable": {"thread_id": thread_id}}
+    # config = {"configurable": {"thread_id": thread_id}}
+    config = {"configurable": {"thread_id": "jatin_session_1"}}
 
     while True:
         user_input = input("You: ")
@@ -57,5 +59,13 @@ def run_cli():
         else:
             print("\nAgent: ... (No response)\n")
 
-if __name__ == "__main__":
-    run_cli()
+# if __name__ == "__main__":
+#     run_cli()
+
+print(DATABASE_URL,"DATABASE_URL")
+with PostgresSaver.from_conn_string(DATABASE_URL) as memory:
+    memory.setup()
+    graph = build_graph(memory)
+    run_cli(graph)
+
+# graph = build_graph()

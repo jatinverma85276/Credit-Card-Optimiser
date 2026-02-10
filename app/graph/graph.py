@@ -1,10 +1,10 @@
 # app/graph/graph.py
-import sqlite3
-from langgraph.checkpoint.sqlite import SqliteSaver
+# import sqlite3
+# from langgraph.checkpoint.sqlite import SqliteSaver
+# from IPython.display import Image, display
 from langgraph.graph import StateGraph, END
 from app.graph.state import GraphState
 from typing import Literal
-from IPython.display import Image, display
 from app.graph.nodes import (
     add_card_node,
     card_parser_node,
@@ -22,8 +22,8 @@ from app.graph.nodes import (
 # 1. Setup Persistent Checkpointer Connection
 # We use a context manager in the main execution block usually, 
 # but for a script, we can open it globally or pass it in.
-conn = sqlite3.connect("checkpoints.db", check_same_thread=False)
-memory = SqliteSaver(conn)
+# conn = sqlite3.connect("checkpoints.db", check_same_thread=False)
+# memory = SqliteSaver(conn)
 
 # def build_graph():
 #     builder = StateGraph(GraphState)
@@ -53,7 +53,7 @@ def route_after_parser(state: GraphState) -> Literal["add_card", "__end__"]:
     return "__end__"
 
 
-def build_graph():
+def build_graph(memory=None):
     builder = StateGraph(GraphState)
 
     builder.add_node("router", router_node)
