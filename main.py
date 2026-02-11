@@ -29,7 +29,7 @@ def run_cli(graph):
     
     # 2. Config dictionary tells the graph which memory to load
     # config = {"configurable": {"thread_id": thread_id}}
-    config = {"configurable": {"thread_id": "jatin_session_1"}}
+    config = {"configurable": {"thread_id": "jatin_1"}}
 
     while True:
         user_input = input("You: ")
@@ -64,7 +64,7 @@ def run_cli(graph):
 
 print(DATABASE_URL,"DATABASE_URL")
 with PostgresSaver.from_conn_string(DATABASE_URL) as memory:
-    memory.setup()
+    # memory.setup()
     graph = build_graph(memory)
     run_cli(graph)
 

@@ -9,7 +9,7 @@ sqlite_cursor = sqlite_conn.cursor()
 # Connect Postgres
 pg_conn = psycopg2.connect(
     dbname="credit_card_ai",
-    user="postgres",
+    user="jatinverma",
     password="1234",
     host="localhost",
     port="5432"

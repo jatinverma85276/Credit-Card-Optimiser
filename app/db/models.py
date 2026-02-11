@@ -1,5 +1,7 @@
-from sqlalchemy import Column, Integer, String, Text, JSON
+from sqlalchemy import Column, Integer, String, Text, JSON, Float, DateTime
 from app.db.database import Base
+from sqlalchemy.sql import func
+# from pgvector.sqlalchemy import Vector  # <--- The magic import
 
 class CreditCardModel(Base):
     __tablename__ = "credit_cards"
