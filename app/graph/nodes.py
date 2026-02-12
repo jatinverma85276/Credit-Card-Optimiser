@@ -3,7 +3,6 @@
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import AIMessage
 from langchain_core.messages import SystemMessage
-from app.db.transaction_repositoy import save_transaction
 from app.schemas.transaction import Transaction
 from app.db.database import SessionLocal
 from app.schemas.credit_card import CreditCard
@@ -497,22 +496,6 @@ def decision_node(state: GraphState) -> GraphState:
     txn = state["parsed_transaction"]
     best_card = state.get("best_card")
     breakdown = state.get("reward_breakdown", [])
-
-    # print(txn.merchant, "Merchant")
-    # print(txn.category, "Category")
-    # print(txn.amount, "Amount")
-    # print(state.get("best_card"), "Best Card")
-    # print(best_card.card_name, "Best Card Name")
-    print(state.get("reward_breakdown"), "Reward Breakdown")
-    
-    # save_transaction({
-    #     "user_id": "jatin_1",   # later from auth
-    #     "merchant": state.get("merchant"),
-    #     "category": state.get("category"),
-    #     "amount": state.get("amount"),
-    #     "recommended_card": best_card.card_name,
-    #     "reward_points": state.get("best_reward")
-    # })
 
     # Safety check
     if not best_card:
