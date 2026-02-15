@@ -1,6 +1,7 @@
 from sqlalchemy import Column, Integer, String, Text, JSON, Float, DateTime
 from app.db.database import Base
 from sqlalchemy.sql import func
+from pgvector.sqlalchemy import Vector  # <--- The Bridge between Python & Postgres
 # from pgvector.sqlalchemy import Vector  # <--- The magic import
 
 class CreditCardModel(Base):
@@ -39,3 +40,23 @@ class CreditCardModel(Base):
     # Stores List[str]
     excluded_categories = Column(JSON, nullable=True)   
     key_benefits = Column(JSON, nullable=True)
+
+
+
+class TransactionHistory(Base):
+    __tablename__ = "transaction_history"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(String, index=True)
+    
+    # Standard Fields
+    merchant = Column(String)           # e.g., "Uber"
+    category = Column(String)           # e.g., "Travel"
+    amount = Column(Float)              # e.g., 450.0
+    description = Column(Text)          # e.g., "Ride to Airport"
+    
+    # 🧠 Semantic Brain
+    # 1536 is the standard dimension size for OpenAI's 'text-embedding-3-small'
+    embedding = Column(Vector(1536)) 
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())

@@ -1,6 +1,7 @@
 # app/graph/nodes.py
 
 from langchain_openai import ChatOpenAI
+from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import AIMessage
 from langchain_core.messages import SystemMessage
 from app.schemas.transaction import Transaction
@@ -12,11 +13,17 @@ from pprint import pprint
 import sqlite3
 import json
 from app.db.card_repository import add_card
+from langchain_core.runnables import RunnableConfig
+from app.services.memory_service import save_transaction_memory
 from app.utils.CONSTANTS import FINANCE_KEYWORDS
 
 load_dotenv()
 
 llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.2)
+# llm = ChatGoogleGenerativeAI(
+#     model="gemini-2.0-flash",  # Add 'models/' prefix
+#     temperature=0.2,
+# )
 
 # -------------------------
 # Router Node
@@ -270,7 +277,7 @@ Rules:
 - Use null if unknown.
 """
 
-def transaction_parser_node(state: GraphState) -> GraphState:
+def transaction_parser_node(state: GraphState, config: RunnableConfig):
 
     raw_text = state["messages"][-1].content.strip()
 
@@ -280,8 +287,26 @@ def transaction_parser_node(state: GraphState) -> GraphState:
         SystemMessage(content=TRANSACTION_PARSER_PROMPT),
         raw_text
     ])
-    # print(state, "State")
-    # print(parsed_txn.model_dump(), "Parsed Transaction")
+
+    # --- 🧠 NEW: VECTOR MEMORY INJECTION ---
+    if parsed_txn:
+        try:
+            # Get the Thread ID (User ID)
+            user_id = config.get("configurable", {}).get("thread_id", "default")
+            # Save to Postgres Vector DB
+            save_transaction_memory(
+                user_id=user_id,
+                merchant=parsed_txn.merchant,
+                amount=parsed_txn.amount,
+                category=parsed_txn.category,
+                desc=state["messages"][-1].content  # Save original query as description
+            )
+            print(f"✅ Saved Semantic Memory: {parsed_txn.merchant}")
+            
+        except Exception as e:
+            # CRITICAL: Do not crash the flow if DB save fails
+            print(f"⚠️ Memory Save Failed: {e}")
+    # ---------------------------------------
 
     return {
         **state,

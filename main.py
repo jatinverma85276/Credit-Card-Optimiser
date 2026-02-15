@@ -29,7 +29,7 @@ def run_cli(graph):
     
     # 2. Config dictionary tells the graph which memory to load
     # config = {"configurable": {"thread_id": thread_id}}
-    config = {"configurable": {"thread_id": "jatin_1"}}
+    config = {"configurable": {"thread_id": thread_id}}
 
     while True:
         user_input = input("You: ")

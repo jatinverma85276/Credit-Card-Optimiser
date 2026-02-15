@@ -18,8 +18,7 @@ DATABASE_URL = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NA
 # DATABASE_URL = "sqlite:///./cards.db"
 
 engine = create_engine(
-    DATABASE_URL,
-    connect_args={"check_same_thread": False}  # SQLite only
+    DATABASE_URL
 )
 
 SessionLocal = sessionmaker(
