@@ -618,6 +618,7 @@ def llm_recommendation_node(state: GraphState) -> GraphState:
     # 1. Extract Context
     txn = state.get("parsed_transaction")
     breakdown = state.get("reward_breakdown", [])
+    ltm_context = state.get("memory_context", "")
     
     # CRITICAL: Get the user's specific question
     user_query = state["messages"][-1].content
@@ -635,6 +636,9 @@ def llm_recommendation_node(state: GraphState) -> GraphState:
     # 3. The "Comparison-First" Prompt
     prompt = f"""
     You are a Credit Card Strategy Expert.
+
+    ### LONG-TERM MEMORY (PAST CONTEXT)
+    {ltm_context}  <-- ✅ INJECTED HERE (If empty, this line is blank)
 
     ### DATA (Calculated Rewards)
     {breakdown_text}

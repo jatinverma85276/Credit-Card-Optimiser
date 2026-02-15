@@ -1,6 +1,6 @@
 from sqlalchemy import text
 from app.db.database import SessionLocal
-from app.db.models import TransactionHistory
+from app.db.models import TransactionHistory, UserMemory
 from app.utils.vectors import get_text_embedding
 
 def save_transaction_memory(user_id: str, merchant: str, amount: float, category: str, desc: str = ""):
@@ -73,3 +73,23 @@ def semantic_search_transactions(user_id: str, query: str, limit: int = 5, thres
         }).fetchall()
         
     return results
+
+
+def save_general_memory(user_id: str, text: str, category: str = "general"):
+    """
+    Saves a non-financial fact about the user.
+    """
+    # 1. Vectorize the text
+    vector = get_text_embedding(text)
+    
+    # 2. Save to Postgres
+    with SessionLocal() as db:
+        memory = UserMemory(
+            user_id=user_id,
+            memory_text=text,
+            category=category,
+            embedding=vector
+        )
+        db.add(memory)
+        db.commit()
+        print(f"🧠 Saved General Memory: '{text}'")

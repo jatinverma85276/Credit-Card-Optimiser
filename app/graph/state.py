@@ -23,3 +23,5 @@ class GraphState(TypedDict):
     best_card: Optional[dict]
     reward_breakdown: Optional[list]
 
+    memory_context: str
+

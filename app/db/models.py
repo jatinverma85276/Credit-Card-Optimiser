@@ -60,3 +60,21 @@ class TransactionHistory(Base):
     embedding = Column(Vector(1536)) 
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class UserMemory(Base):
+    __tablename__ = "user_memories"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(String, index=True)
+    
+    # "My dog's name is Bruno"
+    memory_text = Column(Text)
+    
+    # "identity", "preference", "relationship"
+    category = Column(String) 
+    
+    # 🧠 Semantic Brain (Vector)
+    embedding = Column(Vector(1536)) 
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
