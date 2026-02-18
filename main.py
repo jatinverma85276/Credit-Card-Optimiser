@@ -18,13 +18,13 @@ async def lifespan(app: FastAPI):
     """Lifespan event handler for startup and shutdown"""
     global graph, memory
     # Startup
-    memory = PostgresSaver.from_conn_string(DATABASE_URL)
-    memory.__enter__()  # Enter the context manager
+    memory_context = PostgresSaver.from_conn_string(DATABASE_URL)
+    memory = memory_context.__enter__()  # Get the actual saver instance
     graph = build_graph(memory)
     yield
     # Shutdown
-    if memory:
-        memory.__exit__(None, None, None)  # Exit the context manager
+    if memory_context:
+        memory_context.__exit__(None, None, None)  # Exit the context manager
 
 app = FastAPI(title="Credit Card Optimizer API", lifespan=lifespan)
 
@@ -44,6 +44,14 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     response: str
     thread_id: str
+
+class Message(BaseModel):
+    role: str
+    content: str
+
+class ChatHistoryResponse(BaseModel):
+    thread_id: str
+    messages: list[Message]
 
 @app.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):  
@@ -77,6 +85,34 @@ async def chat(request: ChatRequest):
     
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error processing message: {str(e)}")
+
+@app.get("/chat/history/{thread_id}", response_model=ChatHistoryResponse)
+async def get_chat_history(thread_id: str):
+    """
+    Get chat history for a specific thread
+    """
+    if not graph:
+        raise HTTPException(status_code=503, detail="Service not initialized")
+    
+    try:
+        config = {"configurable": {"thread_id": thread_id}}
+        snapshot = graph.get_state(config)
+        
+        if not snapshot.values or "messages" not in snapshot.values:
+            raise HTTPException(status_code=404, detail="Thread not found or no messages")
+        
+        messages = []
+        for msg in snapshot.values["messages"]:
+            # Determine role based on message type
+            role = "user" if msg.__class__.__name__ == "HumanMessage" else "assistant"
+            messages.append(Message(role=role, content=msg.content))
+        
+        return ChatHistoryResponse(thread_id=thread_id, messages=messages)
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error retrieving chat history: {str(e)}")
 
 @app.get("/health")
 async def health_check():
