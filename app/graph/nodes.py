@@ -93,8 +93,13 @@ Answer normally and clearly.
 """
 
 def general_llm_node(state: GraphState) -> GraphState:
+    # Build system prompt with memory context if available
+    system_prompt = GENERAL_SYSTEM_PROMPT
+    if state.get("memory_context"):
+        system_prompt += f"\n\n{state['memory_context']}"
+    
     messages = [
-        SystemMessage(content=GENERAL_SYSTEM_PROMPT),
+        SystemMessage(content=system_prompt),
         *state["messages"]
     ]
     # print(state, "Statee general")

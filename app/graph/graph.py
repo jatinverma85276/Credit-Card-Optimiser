@@ -72,6 +72,7 @@ def build_graph(memory=None):
     builder.add_node("reward_calculation", reward_calculation_node)
     builder.add_node("decision", decision_node)
     builder.add_node("memory_retrieval", memory_retrieval_node)
+    builder.add_node("memory_retrieval_general", memory_retrieval_node)  # Reuse same node for general queries
     builder.add_node("llm_recommendation", llm_recommendation_node)
 
     builder.set_entry_point("profiler")
@@ -83,9 +84,12 @@ def build_graph(memory=None):
         route_selector,
         {
             "finance": "finance_router",
-            "general": "general_agent"
+            "general": "memory_retrieval_general"  # Retrieve memories before general agent
         }
     )
+    
+    # Add edge from memory_retrieval_general to general_agent
+    builder.add_edge("memory_retrieval_general", "general_agent")
 
     # Level 2 routing (inside finance)
     builder.add_conditional_edges(

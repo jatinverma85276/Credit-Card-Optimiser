@@ -43,6 +43,7 @@ app.add_middleware(
 class ChatRequest(BaseModel):
     message: str
     thread_id: str = None
+    user_id: str = "default_user"  # Global user identifier for cross-session memory
     stream: bool = False
 
 class ChatResponse(BaseModel):
@@ -76,13 +77,22 @@ async def chat(request: ChatRequest):
     """
     Chat endpoint for interacting with the credit card optimizer agent
     Supports streaming with stream=true parameter
+    user_id: Global identifier for cross-session memory (default: "default_user")
+    thread_id: Session-specific conversation thread
     """
     if not graph:
         raise HTTPException(status_code=503, detail="Service not initialized")
     
     # Generate or use provided thread_id
     thread_id = request.thread_id if request.thread_id else str(uuid.uuid4())
-    config = {"configurable": {"thread_id": thread_id}}
+    
+    # Config with both thread_id (for conversation) and user_id (for LTM)
+    config = {
+        "configurable": {
+            "thread_id": thread_id,
+            "user_id": request.user_id  # Global user ID for cross-session memory
+        }
+    }
     
     # Save thread name BEFORE processing if it's a new thread
     if request.thread_id:

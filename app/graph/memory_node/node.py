@@ -12,36 +12,68 @@ load_dotenv()
 
 llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.2)
 
+from app.graph.state import GraphState
+from dotenv import load_dotenv
+from langchain_core.runnables import RunnableConfig
+from pydantic import BaseModel, Field
+from app.schemas.memory_extraction import MemoryExtraction
+from app.services.memory_service import save_general_memory, semantic_search_general_memories
+from app.services.memory_service import semantic_search_transactions 
+from langchain_core.messages import SystemMessage
+from langchain_openai import ChatOpenAI
+
+load_dotenv()
+
+llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.2)
+
 # -------------------------
 # Memory Retrieval Node
 # -------------------------
 def memory_retrieval_node(state: GraphState, config: RunnableConfig):
-    user_id = config.get("configurable", {}).get("thread_id")
+    # Use global user_id for cross-session memory, fallback to thread_id
+    user_id = config.get("configurable", {}).get("user_id") or config.get("configurable", {}).get("thread_id")
     last_message = state["messages"][-1].content
     
-    # 1. Search LTM with strict threshold
-    # This will return EMPTY list if nothing is relevant (> 0.75)
-    relevant_memories = semantic_search_transactions(
+    print(f"🧠 Retrieving memories for user_id: {user_id}")
+    
+    # 1. Search Transaction LTM
+    relevant_transactions = semantic_search_transactions(
         user_id=user_id, 
         query=last_message, 
         threshold=0.75
     )
     
-    # 2. Format Context String (Only if data found)
+    # 2. Search General Memories (name, preferences, etc.)
+    relevant_general_memories = semantic_search_general_memories(
+        user_id=user_id,
+        query=last_message,
+        threshold=0.25  # Lower threshold for general facts to catch identity queries
+    )
+    
+    # 3. Format Context String
     memory_context = ""
-    if relevant_memories:
-        memory_context = "### RELEVANT PAST TRANSACTIONS (LTM):\n"
-        for mem in relevant_memories:
-            # mem is a Row object: (merchant, amount, category, description, created_at, similarity)
+    
+    # Add general memories first (identity, preferences)
+    if relevant_general_memories:
+        memory_context += "### USER PROFILE (Long-term Memory):\n"
+        for mem in relevant_general_memories:
+            memory_context += f"- {mem.memory_text} [{mem.category}]\n"
+        print(f"🧠 LTM: Injecting {len(relevant_general_memories)} general memories.")
+    
+    # Add transaction memories
+    if relevant_transactions:
+        memory_context += "\n### RELEVANT PAST TRANSACTIONS:\n"
+        for mem in relevant_transactions:
             memory_context += (
                 f"- {mem.merchant} ({mem.category}): ₹{mem.amount} "
                 f"[Similarity: {mem.similarity:.2f}]\n"
             )
-        print(f"🧠 LTM Injecting {len(relevant_memories)} memories.")
-    else:
+        print(f"🧠 LTM: Injecting {len(relevant_transactions)} transaction memories.")
+    
+    if not relevant_general_memories and not relevant_transactions:
         print("🧠 LTM: No relevant memories found.")
 
-    # 3. Store in State to be used by the next node
+    # 4. Store in State to be used by the next node
     return {
         **state,
         "memory_context": memory_context 
@@ -61,8 +93,9 @@ Return valid JSON.
 """
 
 def profiler_node(state: GraphState, config: RunnableConfig):
-    user_id = config.get("configurable", {}).get("thread_id", "default")
-    print(user_id, "user_id")
+    # Use global user_id for cross-session memory, fallback to thread_id
+    user_id = config.get("configurable", {}).get("user_id") or config.get("configurable", {}).get("thread_id", "default")
+    print(f"🧠 Profiler checking for memories - user_id: {user_id}")
     last_msg = state["messages"][-1].content
     
     # 1. Run LLM to see if there is a fact
