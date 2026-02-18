@@ -6,7 +6,8 @@ from pydantic import BaseModel
 from langchain_core.messages import HumanMessage
 from app.graph.graph import build_graph
 from langgraph.checkpoint.postgres import PostgresSaver
-from app.db.database import DATABASE_URL, engine
+from app.db.database import DATABASE_URL, engine, SessionLocal
+from app.db.models import ChatThread
 from sqlalchemy import text
 
 # Global graph instance
@@ -53,6 +54,20 @@ class ChatHistoryResponse(BaseModel):
     thread_id: str
     messages: list[Message]
 
+class ThreadListResponse(BaseModel):
+    threads: list[str]
+    count: int
+
+class ThreadInfo(BaseModel):
+    thread_id: str
+    thread_name: str
+    created_at: str
+    updated_at: str
+
+class ThreadListDetailedResponse(BaseModel):
+    threads: list[ThreadInfo]
+    count: int
+
 @app.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):  
     """
@@ -62,6 +77,7 @@ async def chat(request: ChatRequest):
         raise HTTPException(status_code=503, detail="Service not initialized")
     
     # Generate or use provided thread_id
+    is_new_thread = request.thread_id is None
     thread_id = request.thread_id or str(uuid.uuid4())
     config = {"configurable": {"thread_id": thread_id}}
     
@@ -81,10 +97,59 @@ async def chat(request: ChatRequest):
         else:
             response_text = "No response generated"
         
+        # Save thread name if it's a new thread
+        if is_new_thread:
+            db = SessionLocal()
+            try:
+                # Create thread name from first 50 chars of message
+                thread_name = request.message[:50] + "..." if len(request.message) > 50 else request.message
+                
+                new_thread = ChatThread(
+                    thread_id=thread_id,
+                    thread_name=thread_name
+                )
+                db.add(new_thread)
+                db.commit()
+            except Exception as e:
+                db.rollback()
+                print(f"Error saving thread metadata: {str(e)}")
+            finally:
+                db.close()
+        
         return ChatResponse(response=response_text, thread_id=thread_id)
     
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error processing message: {str(e)}")
+
+@app.get("/chat/threads", response_model=ThreadListDetailedResponse)
+async def get_all_threads():
+    """
+    Get all thread IDs (session IDs) with their names from the database
+    """
+    if not graph:
+        raise HTTPException(status_code=503, detail="Service not initialized")
+    
+    try:
+        db = SessionLocal()
+        try:
+            threads = db.query(ChatThread).order_by(ChatThread.updated_at.desc()).all()
+            
+            thread_list = [
+                ThreadInfo(
+                    thread_id=thread.thread_id,
+                    thread_name=thread.thread_name,
+                    created_at=thread.created_at.isoformat(),
+                    updated_at=thread.updated_at.isoformat()
+                )
+                for thread in threads
+            ]
+            
+            return ThreadListDetailedResponse(threads=thread_list, count=len(thread_list))
+        finally:
+            db.close()
+    
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error retrieving threads: {str(e)}")
 
 @app.get("/chat/history/{thread_id}", response_model=ChatHistoryResponse)
 async def get_chat_history(thread_id: str):
