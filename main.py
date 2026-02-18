@@ -2,13 +2,15 @@ import uuid
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, AIMessage
 from app.graph.graph import build_graph
 from langgraph.checkpoint.postgres import PostgresSaver
 from app.db.database import DATABASE_URL, engine, SessionLocal
 from app.db.models import ChatThread
 from sqlalchemy import text
+import json
 
 # Global graph instance
 graph = None
@@ -41,6 +43,7 @@ app.add_middleware(
 class ChatRequest(BaseModel):
     message: str
     thread_id: str = None
+    stream: bool = False
 
 class ChatResponse(BaseModel):
     response: str
@@ -68,55 +71,90 @@ class ThreadListDetailedResponse(BaseModel):
     threads: list[ThreadInfo]
     count: int
 
-@app.post("/chat", response_model=ChatResponse)
+@app.post("/chat")
 async def chat(request: ChatRequest):  
     """
     Chat endpoint for interacting with the credit card optimizer agent
+    Supports streaming with stream=true parameter
     """
     if not graph:
         raise HTTPException(status_code=503, detail="Service not initialized")
     
     # Generate or use provided thread_id
-    is_new_thread = request.thread_id is None
-    thread_id = request.thread_id or str(uuid.uuid4())
+    thread_id = request.thread_id if request.thread_id else str(uuid.uuid4())
     config = {"configurable": {"thread_id": thread_id}}
+    
+    # Save thread name BEFORE processing if it's a new thread
+    if request.thread_id:
+        print("thread_id")
+        db = SessionLocal()
+        try:
+            # Check if thread already exists
+            existing_thread = db.query(ChatThread).filter(ChatThread.thread_id == thread_id).first()
+            if not existing_thread:
+                thread_name = request.message[:50] + "..." if len(request.message) > 50 else request.message
+                new_thread = ChatThread(thread_id=thread_id, thread_name=thread_name)
+                db.add(new_thread)
+                db.commit()
+                db.refresh(new_thread)
+                print(f"✅ Saved new thread: {thread_id} - {thread_name}")
+            else:
+                print(f"Thread {thread_id} already exists")
+        except Exception as e:
+            db.rollback()
+            print(f"❌ Error saving thread metadata: {str(e)}")
+            import traceback
+            traceback.print_exc()
+        finally:
+            db.close()
     
     try:
         # Process message through graph
         inputs = {"messages": [HumanMessage(content=request.message)]}
         
-        for event in graph.stream(inputs, config=config):
-            pass  # Process all events
+        if request.stream:
+            # Streaming response
+            async def event_generator():
+                try:
+                    for event in graph.stream(inputs, config=config):
+                        # Stream intermediate steps
+                        for node_name, node_data in event.items():
+                            if "messages" in node_data and node_data["messages"]:
+                                last_msg = node_data["messages"][-1]
+                                if isinstance(last_msg, AIMessage):
+                                    yield f"data: {json.dumps({'type': 'progress', 'node': node_name, 'content': last_msg.content})}\n\n"
+                    
+                    # Get final response
+                    snapshot = graph.get_state(config)
+                    if snapshot.values and "messages" in snapshot.values:
+                        last_msg = snapshot.values["messages"][-1]
+                        response_text = last_msg.content
+                    else:
+                        response_text = "No response generated"
+                    
+                    # Send final response
+                    yield f"data: {json.dumps({'type': 'final', 'response': response_text, 'thread_id': thread_id})}\n\n"
+                    
+                except Exception as e:
+                    yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
+            
+            return StreamingResponse(event_generator(), media_type="text/event-stream")
         
-        # Get final response
-        snapshot = graph.get_state(config)
-        
-        if snapshot.values and "messages" in snapshot.values:
-            last_msg = snapshot.values["messages"][-1]
-            response_text = last_msg.content
         else:
-            response_text = "No response generated"
-        
-        # Save thread name if it's a new thread
-        if is_new_thread:
-            db = SessionLocal()
-            try:
-                # Create thread name from first 50 chars of message
-                thread_name = request.message[:50] + "..." if len(request.message) > 50 else request.message
-                
-                new_thread = ChatThread(
-                    thread_id=thread_id,
-                    thread_name=thread_name
-                )
-                db.add(new_thread)
-                db.commit()
-            except Exception as e:
-                db.rollback()
-                print(f"Error saving thread metadata: {str(e)}")
-            finally:
-                db.close()
-        
-        return ChatResponse(response=response_text, thread_id=thread_id)
+            # Non-streaming response (original behavior)
+            for event in graph.stream(inputs, config=config):
+                pass  # Process all events
+            
+            # Get final response
+            snapshot = graph.get_state(config)
+            
+            if snapshot.values and "messages" in snapshot.values:
+                last_msg = snapshot.values["messages"][-1]
+                response_text = last_msg.content
+            else:
+                response_text = "No response generated"
+            
+            return ChatResponse(response=response_text, thread_id=thread_id)
     
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error processing message: {str(e)}")
@@ -154,7 +192,7 @@ async def get_all_threads():
 @app.get("/chat/history/{thread_id}", response_model=ChatHistoryResponse)
 async def get_chat_history(thread_id: str):
     """
-    Get chat history for a specific thread
+    Get chat history for a specific thread (only user messages and final assistant responses)
     """
     if not graph:
         raise HTTPException(status_code=503, detail="Service not initialized")
@@ -167,10 +205,18 @@ async def get_chat_history(thread_id: str):
             raise HTTPException(status_code=404, detail="Thread not found or no messages")
         
         messages = []
-        for msg in snapshot.values["messages"]:
-            # Determine role based on message type
-            role = "user" if msg.__class__.__name__ == "HumanMessage" else "assistant"
-            messages.append(Message(role=role, content=msg.content))
+        all_messages = snapshot.values["messages"]
+        
+        # Filter to show only user messages and final assistant responses
+        for i, msg in enumerate(all_messages):
+            if msg.__class__.__name__ == "HumanMessage":
+                # Always include user messages
+                messages.append(Message(role="user", content=msg.content))
+            elif msg.__class__.__name__ == "AIMessage":
+                # Only include the last AI message before the next user message or end
+                is_last_ai = (i == len(all_messages) - 1) or (i + 1 < len(all_messages) and all_messages[i + 1].__class__.__name__ == "HumanMessage")
+                if is_last_ai:
+                    messages.append(Message(role="assistant", content=msg.content))
         
         return ChatHistoryResponse(thread_id=thread_id, messages=messages)
     
