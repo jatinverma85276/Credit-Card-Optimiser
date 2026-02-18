@@ -1,9 +1,12 @@
 langgraph
 langchain
 langchain-openai
+langchain_google_genai
 python-dotenv
 sqlalchemy
 pydantic
 langgraph-checkpoint-postgres 
 psycopg2-binary
 pgvector
+fastapi
+uvicorn[standard]

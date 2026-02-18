@@ -1,71 +1,110 @@
 import uuid
+from contextlib import asynccontextmanager
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 from langchain_core.messages import HumanMessage
 from app.graph.graph import build_graph
 from langgraph.checkpoint.postgres import PostgresSaver
-from app.db.database import DATABASE_URL
+from app.db.database import DATABASE_URL, engine
+from sqlalchemy import text
 
-# graph = build_graph()
+# Global graph instance
+graph = None
+memory = None
 
-# result = graph.invoke({
-#     "messages": [
-#         HumanMessage(content="""/add_card
-# """)
-#     ],
-#     "route": "general"  # default value
-# })
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Lifespan event handler for startup and shutdown"""
+    global graph, memory
+    # Startup
+    memory = PostgresSaver.from_conn_string(DATABASE_URL)
+    memory.__enter__()  # Enter the context manager
+    graph = build_graph(memory)
+    yield
+    # Shutdown
+    if memory:
+        memory.__exit__(None, None, None)  # Exit the context manager
 
-# print(result["messages"][-1].content)
+app = FastAPI(title="Credit Card Optimizer API", lifespan=lifespan)
 
-# Build graph (now with memory attached)
+# CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
+class ChatRequest(BaseModel):
+    message: str
+    thread_id: str = None
 
-def run_cli(graph):
-    print("\n💳 Credit Card Optimiser Agent (with Memory)")
-    print("Type 'exit' to quit.\n")
+class ChatResponse(BaseModel):
+    response: str
+    thread_id: str
 
-    # 1. Generate a Thread ID for this session
-    # In a web app, this would be the user_id or session_id
-    thread_id = str(uuid.uuid4())
+@app.post("/chat", response_model=ChatResponse)
+async def chat(request: ChatRequest):  
+    """
+    Chat endpoint for interacting with the credit card optimizer agent
+    """
+    if not graph:
+        raise HTTPException(status_code=503, detail="Service not initialized")
     
-    # 2. Config dictionary tells the graph which memory to load
-    # config = {"configurable": {"thread_id": thread_id}}
+    # Generate or use provided thread_id
+    thread_id = request.thread_id or str(uuid.uuid4())
     config = {"configurable": {"thread_id": thread_id}}
-
-    while True:
-        user_input = input("You: ")
-
-        if user_input.lower() in ["exit", "quit"]:
-            print("Goodbye 👋")
-            break
-
-        # 3. STREAMING OUTPUT
-        # We only pass the NEW message. The graph loads the rest from DB.
-        inputs = {"messages": [HumanMessage(content=user_input)]}
+    
+    try:
+        # Process message through graph
+        inputs = {"messages": [HumanMessage(content=request.message)]}
         
-        # Pass 'config' so it knows which thread to update
         for event in graph.stream(inputs, config=config):
-            for key, value in event.items():
-                # Optional: Print intermediate steps if you want to debug
-                # print(f"  -> Processed by: {key}")
-                pass
+            pass  # Process all events
         
-        # 4. Fetch the final state to get the bot's response
-        # 'graph.get_state(config)' gets the current snapshot of memory
+        # Get final response
         snapshot = graph.get_state(config)
         
         if snapshot.values and "messages" in snapshot.values:
             last_msg = snapshot.values["messages"][-1]
-            print(f"\nAgent: {last_msg.content}\n")
+            response_text = last_msg.content
         else:
-            print("\nAgent: ... (No response)\n")
+            response_text = "No response generated"
+        
+        return ChatResponse(response=response_text, thread_id=thread_id)
+    
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error processing message: {str(e)}")
 
-# if __name__ == "__main__":
-#     run_cli()
-
-print(DATABASE_URL,"DATABASE_URL")
-with PostgresSaver.from_conn_string(DATABASE_URL) as memory:
-    # memory.setup()
-    graph = build_graph(memory)
-    run_cli(graph)
-
-# graph = build_graph()
+@app.get("/health")
+async def health_check():
+    """
+    Health check endpoint - verifies server and database connectivity
+    """
+    health_status = {
+        "status": "healthy",
+        "database": "disconnected",
+        "graph": "not_initialized"
+    }
+    
+    # Check database connection
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        health_status["database"] = "connected"
+    except Exception as e:
+        health_status["status"] = "unhealthy"
+        health_status["database"] = f"error: {str(e)}"
+    
+    # Check graph initialization
+    if graph:
+        health_status["graph"] = "initialized"
+    else:
+        health_status["status"] = "unhealthy"
+    
+    if health_status["status"] != "healthy":
+        raise HTTPException(status_code=503, detail=health_status)
+    
+    return health_status
