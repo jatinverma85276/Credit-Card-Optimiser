@@ -41,6 +41,171 @@ def router_node(state: GraphState) -> GraphState:
         **state,
         "route": route
     }
+# -------------------------
+# Supreme Manage Request Node (Pure AI-Driven Router)
+# -------------------------
+MANAGE_REQUEST_SYSTEM_PROMPT = """
+You are the Supreme Router for a Credit Card Optimization System. You have deep understanding of the entire project architecture and user intent.
+
+## YOUR ROLE
+You analyze user requests and intelligently route them to the appropriate specialized flow. You understand context, nuance, and user intent beyond simple pattern matching.
+
+## PROJECT ARCHITECTURE KNOWLEDGE
+
+### Flow 1: ADD_CARD_FLOW
+**Purpose**: Register new credit cards into the user's portfolio
+**Capabilities**:
+- Parses credit card details from unstructured text (terms & conditions, marketing materials, etc.)
+- Extracts: card name, issuer, fees, reward rules, benefits, eligibility criteria
+- Stores structured card data in database
+- Handles commands like /add_card or natural language requests
+
+**Route here when**:
+- User wants to add/register/save a new credit card
+- User provides credit card details, terms, or specifications
+- User mentions getting a new card and wants to track it
+- User pastes card information or terms & conditions
+- User uses /add_card command
+
+**Examples**:
+- "/add_card HDFC Regalia Gold Card with 5x rewards..."
+- "I just got a new Amex card, can you save it?"
+- "Add this card: SBI Cashback Card offers 5% on online..."
+- "Register my new credit card details"
+
+### Flow 2: RECOMMENDATION_FLOW
+**Purpose**: Analyze transactions and recommend optimal credit card
+**Capabilities**:
+- Parses transaction details (merchant, amount, category)
+- Fetches all user's registered cards
+- Calculates reward points/cashback for each card
+- Compares cards based on reward multipliers
+- Retrieves past transaction history for context
+- Provides intelligent recommendations with reasoning
+
+**Route here when**:
+- User describes a purchase/transaction/expense
+- User asks which card to use for a specific merchant or category
+- User wants to compare cards for a transaction
+- User mentions spending money somewhere
+- User asks about maximizing rewards/cashback/points
+- User wants card recommendations for upcoming purchases
+
+**Examples**:
+- "I'm spending 5000 rupees on Amazon, which card should I use?"
+- "Best card for groceries at BigBasket?"
+- "Compare my cards for this Swiggy order"
+- "Which card gives most rewards for travel booking?"
+- "I'm buying electronics worth 50k, recommend a card"
+
+### Flow 3: GENERAL_FLOW
+**Purpose**: Handle general conversation and non-transactional queries
+**Capabilities**:
+- General conversation and chitchat
+- Financial education and advice
+- Questions about credit cards in general (not specific recommendations)
+- Non-finance topics
+- System help and guidance
+
+**Route here when**:
+- User asks general questions about credit cards, credit scores, finance
+- User wants to chat or have casual conversation
+- User asks about topics outside credit card optimization
+- User needs help understanding how the system works
+- User asks educational questions without specific transaction context
+
+**Examples**:
+- "What's a good credit score?"
+- "How do credit card rewards work?"
+- "Tell me about your features"
+- "What's the weather today?"
+- "How are you?"
+- "Explain cashback vs reward points"
+
+## ROUTING DECISION PROCESS
+
+1. **Understand Intent**: What is the user truly trying to accomplish?
+2. **Identify Context**: Is there transaction data? Card details? Or just a question?
+3. **Match to Flow**: Which specialized flow best serves this intent?
+4. **Decide Confidently**: Choose the single best flow
+
+## CRITICAL RULES
+
+- **Be Intelligent**: Don't rely on keywords. Understand the semantic meaning and user intent.
+- **Consider Context**: Look at the full message, not just individual words.
+- **Think Holistically**: What would best serve the user's actual need?
+- **One Flow Only**: Return exactly one flow decision.
+- **No Ambiguity**: Even if unclear, make your best intelligent decision.
+
+## OUTPUT FORMAT
+
+Return ONLY one of these three values (nothing else):
+- add_card_flow
+- recommendation_flow
+- general_flow
+
+Do not explain your reasoning. Just return the flow name.
+"""
+
+def manage_request_node(state: GraphState) -> GraphState:
+    """
+    Supreme AI-driven routing node that intelligently determines which flow to use.
+    This node has deep understanding of the entire project and routes purely based on LLM reasoning.
+    No keyword matching, no pattern matching - pure intelligence.
+    """
+    last_message = state["messages"][-1].content.strip()
+
+    # Pure LLM-based intelligent classification
+    classification_prompt = f"""
+Analyze this user request and determine the optimal flow.
+
+User Request: "{last_message}"
+
+Think about:
+1. What is the user trying to accomplish?
+2. Does this involve adding a new card, getting a recommendation, or general conversation?
+3. Which specialized flow would best serve this user's need?
+
+Return ONLY the flow name: add_card_flow, recommendation_flow, or general_flow
+"""
+
+    response = llm.invoke([
+        SystemMessage(content=MANAGE_REQUEST_SYSTEM_PROMPT),
+        classification_prompt
+    ])
+
+    flow_decision = response.content.strip().lower()
+
+    # Validate the response (ensure it's one of the valid flows)
+    valid_flows = ["add_card_flow", "recommendation_flow", "general_flow"]
+    if flow_decision not in valid_flows:
+        # If LLM returns something unexpected, try to extract the flow name
+        for flow in valid_flows:
+            if flow in flow_decision:
+                flow_decision = flow
+                break
+        else:
+            # Ultimate fallback: ask LLM again with stricter prompt
+            strict_response = llm.invoke([
+                SystemMessage(content="You must return ONLY one of: add_card_flow, recommendation_flow, general_flow"),
+                f"User request: {last_message}\n\nReturn only the flow name:"
+            ])
+            flow_decision = strict_response.content.strip().lower()
+
+            # If still invalid, default to general_flow
+            if flow_decision not in valid_flows:
+                flow_decision = "general_flow"
+
+    print(f"🎯 Supreme Router Decision: {flow_decision}")
+    print(f"📝 User Request: {last_message[:100]}...")
+
+    return {
+        **state,
+        "flow_decision": flow_decision
+    }
+
+
+
 
 
 # -------------------------

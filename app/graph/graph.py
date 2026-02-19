@@ -17,7 +17,8 @@ from app.graph.nodes import (
     reward_calculation_node,
     router_node,
     general_llm_node,
-    transaction_parser_node
+    transaction_parser_node,
+    manage_request_node
 )
 
 # 1. Setup Persistent Checkpointer Connection
@@ -38,6 +39,10 @@ from app.graph.nodes import (
 def route_selector(state: GraphState) -> str:
     return state["route"]
 
+def flow_decision_selector(state: GraphState) -> str:
+    """Routes based on the supreme manage_request node decision"""
+    return state["flow_decision"]
+
 def finance_route_selector(state: GraphState) -> str:
     return state["finance_route"]
 
@@ -57,60 +62,59 @@ def route_after_parser(state: GraphState) -> Literal["add_card", "__end__"]:
 def build_graph(memory=None):
     builder = StateGraph(GraphState)
 
+    # Add the supreme routing node
+    builder.add_node("manage_request", manage_request_node)
+    
+    # Legacy nodes (kept for backward compatibility if needed)
     builder.add_node("router", router_node)
     builder.add_node("finance_router", finance_router_node)
 
+    # Card management flow nodes
     builder.add_node("card_parser", card_parser_node)
     builder.add_node("add_card", add_card_node)
-    builder.add_node("profiler", profiler_node)
     
-    builder.add_node("finance_expense", expense_decision_node)
-    builder.add_node("general_agent", general_llm_node)
-
+    # Profiler and memory nodes
+    builder.add_node("profiler", profiler_node)
+    builder.add_node("memory_retrieval", memory_retrieval_node)
+    builder.add_node("memory_retrieval_general", memory_retrieval_node)
+    
+    # Recommendation flow nodes
     builder.add_node("transaction_parser", transaction_parser_node)
     builder.add_node("fetch_cards", fetch_user_cards_node)
     builder.add_node("reward_calculation", reward_calculation_node)
     builder.add_node("decision", decision_node)
-    builder.add_node("memory_retrieval", memory_retrieval_node)
-    builder.add_node("memory_retrieval_general", memory_retrieval_node)  # Reuse same node for general queries
     builder.add_node("llm_recommendation", llm_recommendation_node)
-
-    builder.set_entry_point("profiler")
-    builder.add_edge("profiler", "router")
-
-    # Level 1 routing
-    builder.add_conditional_edges(
-        "router",
-        route_selector,
-        {
-            "finance": "finance_router",
-            "general": "memory_retrieval_general"  # Retrieve memories before general agent
-        }
-    )
     
-    # Add edge from memory_retrieval_general to general_agent
-    builder.add_edge("memory_retrieval_general", "general_agent")
+    # General agent nodes
+    builder.add_node("general_agent", general_llm_node)
 
-    # Level 2 routing (inside finance)
+    # Set entry point: profiler -> manage_request (supreme router)
+    builder.set_entry_point("profiler")
+    builder.add_edge("profiler", "manage_request")
+
+    # Supreme routing from manage_request node
     builder.add_conditional_edges(
-        "finance_router",
-        finance_route_selector,
+        "manage_request",
+        flow_decision_selector,
         {
-            "add_card": "card_parser",
-            "expense": "finance_expense"
+            "add_card_flow": "card_parser",
+            "recommendation_flow": "transaction_parser",
+            "general_flow": "memory_retrieval_general"
         }
     )
 
+    # Add Card Flow: card_parser -> add_card -> END
     builder.add_conditional_edges(
-        "card_parser",          # From this node
-        route_after_parser,     # Run this logic
-        {                       # Map logic output to next node
+        "card_parser",
+        route_after_parser,
+        {
             "add_card": "add_card",
             "__end__": END
         }
     )
-    
-    builder.add_edge("finance_expense", "transaction_parser")
+    builder.add_edge("add_card", END)
+
+    # Recommendation Flow: transaction_parser -> fetch_cards -> reward_calculation -> decision -> memory_retrieval -> llm_recommendation -> END
     builder.add_edge("transaction_parser", "fetch_cards")
     builder.add_edge("fetch_cards", "reward_calculation")
     builder.add_edge("reward_calculation", "decision")
@@ -118,8 +122,8 @@ def build_graph(memory=None):
     builder.add_edge("memory_retrieval", "llm_recommendation")
     builder.add_edge("llm_recommendation", END)
 
-    # builder.add_edge("card_parser", "add_card")
-    # builder.add_edge("add_card", END)
+    # General Flow: memory_retrieval_general -> general_agent -> END
+    builder.add_edge("memory_retrieval_general", "general_agent")
     builder.add_edge("general_agent", END)
 
     graph = builder.compile(checkpointer=memory)

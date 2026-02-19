@@ -14,6 +14,8 @@ class GraphState(TypedDict):
     # finance sub-routing
     finance_route: Literal["add_card", "expense"]
 
+    flow_decision: Literal["add_card_flow", "recommendation_flow", "general_flow"]
+
     parsed_card: Optional[Dict[str, Any]]
 
     parsed_transaction: Optional[Transaction]
