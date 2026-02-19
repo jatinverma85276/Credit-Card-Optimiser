@@ -235,6 +235,61 @@ async def get_chat_history(thread_id: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error retrieving chat history: {str(e)}")
 
+@app.delete("/chat/thread/{thread_id}")
+async def delete_thread(thread_id: str):
+    """
+    Delete a specific thread/session including:
+    - Thread metadata from chat_threads table
+    - Conversation history from checkpoints
+    """
+    if not graph or not memory:
+        raise HTTPException(status_code=503, detail="Service not initialized")
+    
+    try:
+        db = SessionLocal()
+        deleted_items = {
+            "thread_metadata": False,
+            "checkpoints": False
+        }
+        
+        try:
+            # Delete thread metadata from chat_threads table
+            thread = db.query(ChatThread).filter(ChatThread.thread_id == thread_id).first()
+            if thread:
+                db.delete(thread)
+                db.commit()
+                deleted_items["thread_metadata"] = True
+            
+            # Delete checkpoints from PostgresSaver
+            # The checkpoints table stores conversation history
+            with engine.connect() as conn:
+                # Delete from checkpoints table
+                result = conn.execute(
+                    text("DELETE FROM checkpoints WHERE thread_id = :thread_id"),
+                    {"thread_id": thread_id}
+                )
+                conn.commit()
+                
+                if result.rowcount > 0:
+                    deleted_items["checkpoints"] = True
+            
+            if not deleted_items["thread_metadata"] and not deleted_items["checkpoints"]:
+                raise HTTPException(status_code=404, detail=f"Thread {thread_id} not found")
+            
+            return {
+                "message": f"Thread {thread_id} deleted successfully",
+                "thread_id": thread_id,
+                "deleted": deleted_items
+            }
+        
+        finally:
+            db.close()
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error deleting thread: {str(e)}")
+
 @app.get("/health")
 async def health_check():
     """
