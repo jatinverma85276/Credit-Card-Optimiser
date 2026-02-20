@@ -58,6 +58,32 @@ Retrieve user profile information.
 }
 ```
 
+### Get User's Thread IDs
+**GET** `/user/{user_id}/threads`
+
+Get all threads for a specific user with detailed information.
+
+**Response:**
+```json
+{
+  "threads": [
+    {
+      "thread_id": "3f53f17f-1bb7-08-5a878",
+      "thread_name": "What's my name ?",
+      "created_at": "2026-02-18T16:31:56.175449+05:30",
+      "updated_at": "2026-02-18T16:31:56.175449+05:30"
+    },
+    {
+      "thread_id": "3f53f17f-1bb7-4083-bc03-6e49a5660d5a",
+      "thread_name": "Trip to Goa",
+      "created_at": "2026-02-18T15:58:02.991470+05:30",
+      "updated_at": "2026-02-18T15:58:02.991470+05:30"
+    }
+  ],
+  "count": 2
+}
+```
+
 ---
 
 ## Thread/Session Management
@@ -212,6 +238,10 @@ curl -X POST http://localhost:8000/chat \
 
 ### 3. Get user's threads
 ```bash
+# Get all threads for a user with detailed info
+curl http://localhost:8000/user/user_123/threads
+
+# Alternative: Get threads with query parameter (same result)
 curl http://localhost:8000/chat/threads?user_id=user_123
 ```
 

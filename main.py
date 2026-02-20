@@ -212,6 +212,38 @@ async def chat(request: ChatRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error processing message: {str(e)}")
 
+@app.get("/user/{user_id}/threads", response_model=ThreadListDetailedResponse)
+async def get_user_thread_ids(user_id: str):
+    """
+    Get all threads for a specific user with detailed information
+    """
+    if not graph:
+        raise HTTPException(status_code=503, detail="Service not initialized")
+    
+    try:
+        db = SessionLocal()
+        try:
+            threads = db.query(ChatThread).filter(
+                ChatThread.user_id == user_id
+            ).order_by(ChatThread.updated_at.desc()).all()
+            
+            thread_list = [
+                ThreadInfo(
+                    thread_id=thread.thread_id,
+                    thread_name=thread.thread_name,
+                    created_at=thread.created_at.isoformat(),
+                    updated_at=thread.updated_at.isoformat()
+                )
+                for thread in threads
+            ]
+            
+            return ThreadListDetailedResponse(threads=thread_list, count=len(thread_list))
+        finally:
+            db.close()
+    
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error retrieving threads: {str(e)}")
+
 @app.get("/user/{user_id}", response_model=UserResponse)
 async def get_user(user_id: str):
     """
