@@ -8,9 +8,10 @@ class CreditCardModel(Base):
     __tablename__ = "credit_cards"
 
     id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(String, index=True)  # Link cards to specific users
     
     # --- Basic Info ---
-    card_name = Column(String, unique=True, index=True)
+    card_name = Column(String, index=True)  # Removed unique constraint - multiple users can have same card
     issuer = Column(String, index=True)
     card_type = Column(String)
     annual_fee = Column(String)

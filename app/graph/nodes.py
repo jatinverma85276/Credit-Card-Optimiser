@@ -403,7 +403,7 @@ def card_parser_node(state: GraphState) -> GraphState:
 # -------------------------
 # Add Card Agent
 # -------------------------
-def add_card_node(state: GraphState) -> GraphState:
+def add_card_node(state: GraphState, config: RunnableConfig) -> GraphState:
     card_data = state["parsed_card"]
 
     if not card_data:
@@ -412,9 +412,12 @@ def add_card_node(state: GraphState) -> GraphState:
     if isinstance(card_data, str):
         card_data = json.loads(card_data)
 
+    # Get user_id from config
+    user_id = config.get("configurable", {}).get("user_id", "default_user")
+
     db = SessionLocal()
     try:
-        add_card(db, card_data)
+        add_card(db, card_data, user_id)
     finally:
         db.close()
 
@@ -492,42 +495,40 @@ def transaction_parser_node(state: GraphState, config: RunnableConfig):
 # Fetch User Cards Agent
 # -------------------------
 from app.schemas.credit_card import CreditCard, RewardRule, Milestone, Eligibility  # Import your Pydantic models
+from app.db.card_repository import get_user_cards
 
-def fetch_user_cards_node(state: GraphState) -> GraphState:
-    conn = sqlite3.connect("cards.db")
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
-
-    cursor.execute("SELECT * FROM credit_cards")
-    rows = cursor.fetchall()
+def fetch_user_cards_node(state: GraphState, config: RunnableConfig) -> GraphState:
+    # Get user_id from config
+    user_id = config.get("configurable", {}).get("user_id", "default_user")
     
-    # DEBUG: Print actual column names to confirm schema
-    # if len(rows) > 0:
-    #     print("Available Columns:", rows[0].keys())
+    db = SessionLocal()
+    try:
+        rows = get_user_cards(db, user_id)
+    finally:
+        db.close()
 
     cards = []
 
     for row in rows:
         try:
             # 1. Deserialize the nested JSON fields first
-            # We use json.loads() because raw SQLite returns these as strings
-            reward_rules_data = json.loads(row["reward_rules"]) if row["reward_rules"] else []
-            excluded_data = json.loads(row["excluded_categories"]) if row["excluded_categories"] else []
-            benefits_data = json.loads(row["key_benefits"]) if row["key_benefits"] else []
+            reward_rules_data = row.reward_rules if row.reward_rules else []
+            excluded_data = row.excluded_categories if row.excluded_categories else []
+            benefits_data = row.key_benefits if row.key_benefits else []
             
             # Handle new fields if you added them (Milestones, Eligibility)
-            milestones_data = json.loads(row["milestone_benefits"]) if "milestone_benefits" in row.keys() and row["milestone_benefits"] else []
-            eligibility_data = json.loads(row["eligibility_criteria"]) if "eligibility_criteria" in row.keys() and row["eligibility_criteria"] else None
+            milestones_data = row.milestone_benefits if row.milestone_benefits else []
+            eligibility_data = row.eligibility_criteria if row.eligibility_criteria else None
 
             # 2. Reconstruct the Pydantic Object
             card = CreditCard(
-                card_name=row["card_name"],
-                issuer=row["issuer"],
-                card_type=row["card_type"],
-                annual_fee=row["annual_fee"],
-                fee_waiver_condition=row["fee_waiver_condition"],
-                welcome_bonus=row["welcome_bonus"],
-                reward_program_name=row["reward_program_name"], # Note: we renamed this column earlier
+                card_name=row.card_name,
+                issuer=row.issuer,
+                card_type=row.card_type,
+                annual_fee=row.annual_fee,
+                fee_waiver_condition=row.fee_waiver_condition,
+                welcome_bonus=row.welcome_bonus,
+                reward_program_name=row.reward_program_name,
                 
                 # Pass the parsed lists/dicts
                 reward_rules=[RewardRule(**r) for r in reward_rules_data],
@@ -536,25 +537,33 @@ def fetch_user_cards_node(state: GraphState) -> GraphState:
                 excluded_categories=excluded_data,
                 key_benefits=benefits_data,
                 
-                liability_policy=row["liability_policy"] if "liability_policy" in row.keys() else None
+                liability_policy=row.liability_policy if row.liability_policy else None
             )
             
             cards.append(card)
 
         except Exception as e:
-            print(f"Failed to parse card '{row['card_name']}':", e)
+            print(f"Failed to parse card '{row.card_name}':", e)
             import traceback
-            traceback.print_exc() # Helps see exactly which field failed
+            traceback.print_exc()
 
-    conn.close()
+    # If no cards found, prompt user to add cards
+    if len(cards) == 0:
+        return {
+            **state,
+            "available_cards": [],
+            "messages": state["messages"] + [
+                AIMessage(content="You don't have any credit cards registered yet. Please add your credit cards first using the /add_card command to get personalized recommendations.\n\nExample: `/add_card HDFC Regalia Gold Card with 5x rewards on dining...`")
+            ]
+        }
 
-    # print(f"\n✅ Loaded {cards} cards")
+    print(f"\n✅ Loaded {len(cards)} cards for user {user_id}")
 
     return {
         **state,
         "available_cards": cards,
         "messages": state["messages"] + [
-            AIMessage(content=f"Fetched {len(cards)} cards.")
+            AIMessage(content=f"Fetched {len(cards)} cards from your portfolio.")
         ]
     }
 

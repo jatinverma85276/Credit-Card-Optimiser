@@ -8,6 +8,9 @@ class GraphState(TypedDict):
     messages: Annotated[list, add_messages]
     # messages: List[BaseMessage]
 
+    # User identification
+    user_id: str  # User ID for personalization
+
     # top-level routing
     route: Literal["finance", "general"]
 

@@ -172,36 +172,93 @@ Verify server and database connectivity.
 
 ## How User-Specific LTM Works
 
-1. **First Chat**: User sends message with their info
-   - System creates user profile in database
-   - Uses `user.id` as LTM identifier
-   - All memories are tagged with this user_id
+### Complete User Isolation
 
-2. **Subsequent Chats**: Same user, different sessions
-   - System recognizes user by `user.id`
-   - Retrieves user-specific memories across all threads
-   - Maintains personalized context
+Each user has their own:
+1. **Credit Cards Portfolio**: Cards added by one user are not visible to others
+2. **Transaction History**: Past transactions are user-specific
+3. **General Memories**: Preferences, facts, and context
+4. **Conversation Threads**: Chat history and sessions
 
-3. **Memory Isolation**: Each user has separate:
-   - Transaction history
-   - General memories (preferences, facts)
-   - Credit card recommendations
-   - Conversation threads
+### First-Time User Flow
+
+1. **User logs in and starts first chat**:
+   ```json
+   {
+     "message": "I'm spending 2399 on Myntra",
+     "user": {
+       "id": "user_123",
+       "name": "Jatin",
+       "email": "jatin@example.com"
+     }
+   }
+   ```
+
+2. **System Response**:
+   - Creates user profile
+   - Checks if user has any credit cards
+   - If NO cards found: Prompts user to add cards
+   - If cards exist: Provides recommendation
+
+3. **Expected Response for New User**:
+   ```
+   "You don't have any credit cards registered yet. Please add your credit cards first using the /add_card command to get personalized recommendations.
+   
+   Example: /add_card HDFC Regalia Gold Card with 5x rewards on dining..."
+   ```
+
+### Adding Credit Cards
+
+Users must add their own credit cards to get recommendations:
+
+```json
+{
+  "message": "/add_card HDFC Regalia Gold Card. Annual fee: Rs 2500. Rewards: 4 points per Rs 150 on all spends. 5X rewards on travel and dining. Welcome bonus: 10000 points.",
+  "user": {
+    "id": "user_123",
+    "name": "Jatin",
+    "email": "jatin@example.com"
+  }
+}
+```
+
+### Getting Recommendations
+
+Once cards are added, the system provides personalized recommendations:
+
+```json
+{
+  "message": "I'm spending 5000 on Swiggy",
+  "user": {
+    "id": "user_123",
+    "name": "Jatin",
+    "email": "jatin@example.com"
+  }
+}
+```
+
+Response will compare ONLY the user's registered cards and recommend the best one.
 
 ---
 
 ## Migration Required
 
-Before using the new user system, run the migration:
+Before using the new user system, run BOTH migrations in order:
 
 ```bash
+# Step 1: Add users table and update chat_threads
 python migrate_add_users.py
+
+# Step 2: Add user_id to credit_cards table
+python migrate_add_user_to_cards.py
 ```
 
 This will:
 - Create the `users` table
 - Add `user_id` column to `chat_threads`
-- Update existing threads with "default_user"
+- Add `user_id` column to `credit_cards`
+- Remove unique constraint on card_name (multiple users can have same card)
+- Update existing data with "default_user"
 
 ---
 
