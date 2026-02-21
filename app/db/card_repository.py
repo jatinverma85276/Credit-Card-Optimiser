@@ -3,8 +3,9 @@ from sqlalchemy.orm import Session
 from app.db.models import CreditCardModel
 from app.schemas.credit_card import CreditCard
 
-def add_card(db: Session, card: CreditCard):
+def add_card(db: Session, card: CreditCard, user_id: str):
     db_card = CreditCardModel(
+        user_id=user_id,
         card_name=card.card_name,
         issuer=card.issuer,
         card_type=card.card_type,
@@ -41,3 +42,8 @@ def add_card(db: Session, card: CreditCard):
     db.commit()
     db.refresh(db_card)
     return db_card
+
+
+def get_user_cards(db: Session, user_id: str):
+    """Get all credit cards for a specific user"""
+    return db.query(CreditCardModel).filter(CreditCardModel.user_id == user_id).all()

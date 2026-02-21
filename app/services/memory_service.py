@@ -93,3 +93,44 @@ def save_general_memory(user_id: str, text: str, category: str = "general"):
         db.add(memory)
         db.commit()
         print(f"🧠 Saved General Memory: '{text}'")
+
+
+def semantic_search_general_memories(user_id: str, query: str, limit: int = 5, threshold: float = 0.75):
+    """
+    Finds general user memories (name, preferences, etc.) that match the query.
+    
+    Args:
+        user_id: The user's thread_id.
+        query: The user's current question/intent.
+        limit: Max number of memories to retrieve.
+        threshold: Minimum similarity score (0 to 1).
+    """
+    # 1. Convert User Query to Vector
+    query_vector = get_text_embedding(query)
+    
+    # 2. SQL Query with Threshold Logic
+    sql = text("""
+        WITH calculated_scores AS (
+            SELECT 
+                memory_text, 
+                category, 
+                created_at,
+                1 - (embedding <=> :vector) as similarity
+            FROM user_memories
+            WHERE user_id = :user_id
+        )
+        SELECT * FROM calculated_scores
+        WHERE similarity >= :threshold
+        ORDER BY similarity DESC
+        LIMIT :limit;
+    """)
+    
+    with SessionLocal() as db:
+        results = db.execute(sql, {
+            "user_id": user_id, 
+            "vector": str(query_vector), 
+            "threshold": threshold,
+            "limit": limit
+        }).fetchall()
+        
+    return results

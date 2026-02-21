@@ -8,11 +8,16 @@ class GraphState(TypedDict):
     messages: Annotated[list, add_messages]
     # messages: List[BaseMessage]
 
+    # User identification
+    user_id: str  # User ID for personalization
+
     # top-level routing
     route: Literal["finance", "general"]
 
     # finance sub-routing
     finance_route: Literal["add_card", "expense"]
+
+    flow_decision: Literal["add_card_flow", "recommendation_flow", "general_flow"]
 
     parsed_card: Optional[Dict[str, Any]]
 
