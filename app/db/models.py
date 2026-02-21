@@ -4,6 +4,25 @@ from sqlalchemy.sql import func
 from pgvector.sqlalchemy import Vector  # <--- The Bridge between Python & Postgres
 # from pgvector.sqlalchemy import Vector  # <--- The magic import
 
+from sqlalchemy import Column, Integer, String, Text, JSON, Float, DateTime, Boolean
+from app.db.database import Base
+from sqlalchemy.sql import func
+from pgvector.sqlalchemy import Vector  # <--- The Bridge between Python & Postgres
+# from pgvector.sqlalchemy import Vector  # <--- The magic import
+
+class UserAuth(Base):
+    __tablename__ = "user_auth"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(String, unique=True, index=True)  # External user ID (generated on signup)
+    email = Column(String, unique=True, index=True)
+    name = Column(String)
+    hashed_password = Column(String)
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
 class CreditCardModel(Base):
     __tablename__ = "credit_cards"
 

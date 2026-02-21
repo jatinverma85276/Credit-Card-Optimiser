@@ -5,8 +5,12 @@ langchain_google_genai
 python-dotenv
 sqlalchemy
 pydantic
+pydantic[email]
 langgraph-checkpoint-postgres 
 psycopg2-binary
 pgvector
 fastapi
 uvicorn[standard]
+passlib[bcrypt]
+python-multipart
+email-validator

@@ -3,12 +3,13 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr
 from langchain_core.messages import HumanMessage, AIMessage
 from app.graph.graph import build_graph
 from langgraph.checkpoint.postgres import PostgresSaver
 from app.db.database import DATABASE_URL, engine, SessionLocal
-from app.db.models import ChatThread, User
+from app.db.models import ChatThread, User, UserAuth
+from app.services.auth_service import create_user, authenticate_user
 from sqlalchemy import text
 import json
 
@@ -83,6 +84,79 @@ class UserResponse(BaseModel):
     email: str
     created_at: str
     updated_at: str
+
+class SignupRequest(BaseModel):
+    name: str
+    email: EmailStr
+    password: str
+
+class LoginRequest(BaseModel):
+    email: EmailStr
+    password: str
+
+class AuthResponse(BaseModel):
+    user_id: str
+    name: str
+    email: str
+    message: str
+
+@app.post("/auth/signup", response_model=AuthResponse)
+async def signup(request: SignupRequest):
+    """
+    User signup endpoint
+    Creates a new user account with hashed password
+    """
+    db = SessionLocal()
+    try:
+        # Create user in auth table
+        user = create_user(db, request.email, request.name, request.password)
+        
+        return AuthResponse(
+            user_id=user.user_id,
+            name=user.name,
+            email=user.email,
+            message="Account created successfully"
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        db.rollback()
+        print(f"❌ Signup error: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Error creating account: {str(e)}")
+    finally:
+        db.close()
+
+@app.post("/auth/login", response_model=AuthResponse)
+async def login(request: LoginRequest):
+    """
+    User login endpoint
+    Authenticates user with email and password
+    """
+    db = SessionLocal()
+    try:
+        # Authenticate user
+        user = authenticate_user(db, request.email, request.password)
+        
+        if not user:
+            raise HTTPException(
+                status_code=401, 
+                detail="Invalid email or password"
+            )
+        
+        return AuthResponse(
+            user_id=user.user_id,
+            name=user.name,
+            email=user.email,
+            message="Login successful"
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error during login: {str(e)}")
+    finally:
+        db.close()
 
 @app.post("/chat")
 async def chat(request: ChatRequest):  

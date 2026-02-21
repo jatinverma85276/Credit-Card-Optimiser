@@ -1,5 +1,68 @@
 # Credit Card Optimizer API Reference
 
+## Authentication
+
+### Signup (Create Account)
+**POST** `/auth/signup`
+
+Create a new user account with secure password hashing.
+
+**Request Body:**
+```json
+{
+  "name": "Jatin Kumar",
+  "email": "jatinv85276@gmail.com",
+  "password": "SecurePassword123!"
+}
+```
+
+**Response:**
+```json
+{
+  "user_id": "user_1771606239250",
+  "name": "Jatin Kumar",
+  "email": "jatinv85276@gmail.com",
+  "message": "Account created successfully"
+}
+```
+
+**Errors:**
+- 400: Email already registered
+- 422: Invalid email format or missing fields
+- 500: Server error
+
+---
+
+### Login (Authenticate)
+**POST** `/auth/login`
+
+Authenticate user with email and password.
+
+**Request Body:**
+```json
+{
+  "email": "jatinv85276@gmail.com",
+  "password": "SecurePassword123!"
+}
+```
+
+**Response:**
+```json
+{
+  "user_id": "user_1771606239250",
+  "name": "Jatin Kumar",
+  "email": "jatinv85276@gmail.com",
+  "message": "Login successful"
+}
+```
+
+**Errors:**
+- 401: Invalid email or password
+- 422: Invalid email format
+- 500: Server error
+
+---
+
 ## User Management & Authentication
 
 ### Chat with User Context
@@ -243,7 +306,7 @@ Response will compare ONLY the user's registered cards and recommend the best on
 
 ## Migration Required
 
-Before using the new user system, run BOTH migrations in order:
+Before using the system, run ALL migrations in order:
 
 ```bash
 # Step 1: Add users table and update chat_threads
@@ -251,20 +314,95 @@ python migrate_add_users.py
 
 # Step 2: Add user_id to credit_cards table
 python migrate_add_user_to_cards.py
+
+# Step 3: Add authentication table
+python migrate_add_auth.py
+
+# Step 4: Install new dependencies
+pip install -r requirements.txt
 ```
 
 This will:
 - Create the `users` table
+- Create the `user_auth` table for authentication
 - Add `user_id` column to `chat_threads`
 - Add `user_id` column to `credit_cards`
 - Remove unique constraint on card_name (multiple users can have same card)
 - Update existing data with "default_user"
+- Install password hashing libraries
 
 ---
 
 ## Example Usage Flow
 
-### 1. First-time user starts a chat
+### 1. User Signup (First Time)
+```bash
+curl -X POST http://localhost:8000/auth/signup \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "John Doe",
+    "email": "john@example.com",
+    "password": "SecurePass123!"
+  }'
+
+# Response: { "user_id": "user_abc123", "name": "John Doe", ... }
+```
+
+### 2. User Login (Returning User)
+```bash
+curl -X POST http://localhost:8000/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "john@example.com",
+    "password": "SecurePass123!"
+  }'
+
+# Response: { "user_id": "user_abc123", "name": "John Doe", ... }
+```
+
+### 3. First-time chat (will prompt to add cards)
+```bash
+curl -X POST http://localhost:8000/chat \
+  -H "Content-Type: application/json" \
+  -d '{
+    "message": "I want to optimize my credit cards",
+    "user": {
+      "id": "user_abc123",
+      "name": "John Doe",
+      "email": "john@example.com"
+    }
+  }'
+```
+
+### 4. Add credit card
+```bash
+curl -X POST http://localhost:8000/chat \
+  -H "Content-Type: application/json" \
+  -d '{
+    "message": "/add_card HDFC Regalia Gold Card. 5X rewards on dining and travel.",
+    "user": {
+      "id": "user_abc123",
+      "name": "John Doe",
+      "email": "john@example.com"
+    }
+  }'
+```
+
+### 5. Get recommendation
+```bash
+curl -X POST http://localhost:8000/chat \
+  -H "Content-Type: application/json" \
+  -d '{
+    "message": "I want to spend 3000 on Swiggy",
+    "user": {
+      "id": "user_abc123",
+      "name": "John Doe",
+      "email": "john@example.com"
+    }
+  }'
+```
+
+### 6. Get user's threads
 ```bash
 curl -X POST http://localhost:8000/chat \
   -H "Content-Type: application/json" \
