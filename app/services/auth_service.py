@@ -12,25 +12,31 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 def hash_password(password: str) -> str:
     """
-    Hash a password using bcrypt
-    Bcrypt has a 72-byte limit, so we truncate to 72 bytes
-    """
-    # Truncate password to 72 bytes to avoid bcrypt limit
-    password_bytes = password.encode('utf-8')[:72]
-    password = password_bytes.decode('utf-8', errors='ignore')
+    Hash a password using bcrypt with SHA256 pre-hashing
     
-    return pwd_context.hash(password)
+    Why SHA256 first?
+    - Bcrypt has a 72-byte limit
+    - SHA256 always produces 64-character hex string (well under 72 bytes)
+    - This allows passwords of ANY length
+    - Industry standard approach (used by Django, etc.)
+    """
+    # Pre-hash with SHA256 to handle any password length
+    password_hash = hashlib.sha256(password.encode('utf-8')).hexdigest()
+    print(password_hash, "Password hased   ")
+    
+    # Then hash with bcrypt for security
+    return pwd_context.hash(password_hash)
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """
     Verify a password against its hash
-    Applies same truncation logic for consistency
+    Must apply same SHA256 pre-hashing
     """
-    # Truncate password to 72 bytes (same as during hashing)
-    password_bytes = plain_password.encode('utf-8')[:72]
-    plain_password = password_bytes.decode('utf-8', errors='ignore')
+    # Pre-hash with SHA256 (same as during hashing)
+    password_hash = hashlib.sha256(plain_password.encode('utf-8')).hexdigest()
     
-    return pwd_context.verify(plain_password, hashed_password)
+    # Verify with bcrypt
+    return pwd_context.verify(password_hash, hashed_password)
 
 def create_user(db: Session, email: str, name: str, password: str) -> UserAuth:
     """
@@ -44,9 +50,11 @@ def create_user(db: Session, email: str, name: str, password: str) -> UserAuth:
     
     # Generate unique user_id
     user_id = f"user_{uuid.uuid4().hex[:16]}"
-    
+    print(password,"Password")
     # Create user with hashed password
     hashed_password = hash_password(password)
+    print(hashed_password,"Hashed Password")
+
     
     new_user = UserAuth(
         user_id=user_id,
