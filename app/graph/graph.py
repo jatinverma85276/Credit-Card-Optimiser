@@ -58,6 +58,21 @@ def route_after_parser(state: GraphState) -> Literal["add_card", "__end__"]:
     # The user has already received the "Please paste details..." message.
     return "__end__"
 
+def route_after_fetch_cards(state: GraphState) -> Literal["reward_calculation", "__end__"]:
+    """
+    Decides whether to proceed with reward calculation
+    or stop if no cards were found.
+    """
+    cards = state.get("available_cards", [])
+    
+    if cards and len(cards) > 0:
+        # User has cards, continue to reward calculation
+        return "reward_calculation"
+    
+    # No cards found, stop here
+    # The user has already received the "Please add cards..." message
+    return "__end__"
+
 
 def build_graph(memory=None):
     builder = StateGraph(GraphState)
@@ -114,9 +129,19 @@ def build_graph(memory=None):
     )
     builder.add_edge("add_card", END)
 
-    # Recommendation Flow: transaction_parser -> fetch_cards -> reward_calculation -> decision -> memory_retrieval -> llm_recommendation -> END
+    # Recommendation Flow: transaction_parser -> fetch_cards -> (conditional) -> reward_calculation -> decision -> memory_retrieval -> llm_recommendation -> END
     builder.add_edge("transaction_parser", "fetch_cards")
-    builder.add_edge("fetch_cards", "reward_calculation")
+    
+    # Conditional edge: only continue if cards were found
+    builder.add_conditional_edges(
+        "fetch_cards",
+        route_after_fetch_cards,
+        {
+            "reward_calculation": "reward_calculation",
+            "__end__": END
+        }
+    )
+    
     builder.add_edge("reward_calculation", "decision")
     builder.add_edge("decision", "memory_retrieval")
     builder.add_edge("memory_retrieval", "llm_recommendation")
