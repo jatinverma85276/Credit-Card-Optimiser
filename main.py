@@ -13,18 +13,25 @@ from app.services.auth_service import create_user, authenticate_user
 from sqlalchemy import text
 import json
 
-# Global graph instance
-graph = None
+# Global graph instances
+graph = None  # Graph with memory (normal mode)
+graph_incognito = None  # Graph without memory (incognito mode)
 memory = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifespan event handler for startup and shutdown"""
-    global graph, memory
+    global graph, graph_incognito, memory
     # Startup
     memory_context = PostgresSaver.from_conn_string(DATABASE_URL)
     memory = memory_context.__enter__()  # Get the actual saver instance
+    
+    # Build graph with memory for normal mode
     graph = build_graph(memory)
+    
+    # Build graph without memory for incognito mode
+    graph_incognito = build_graph(None)
+    
     yield
     # Shutdown
     if memory_context:
@@ -51,6 +58,7 @@ class ChatRequest(BaseModel):
     thread_id: str = None
     user: UserInfo  # Required user information
     stream: bool = False
+    incognito: bool = False  # Incognito mode - no data saved
 
 class ChatResponse(BaseModel):
     response: str
@@ -162,54 +170,76 @@ async def login(request: LoginRequest):
 async def chat(request: ChatRequest):  
     """
     Chat endpoint for interacting with the credit card optimizer agent
-    Supports streaming with stream=true parameter
-    user: User information (id, name, email) - used for LTM and personalization
-    thread_id: Session-specific conversation thread
+    
+    Parameters:
+    - message: User's message
+    - user: User information (id, name, email)
+    - thread_id: Session-specific conversation thread (optional)
+    - stream: Enable streaming response (optional)
+    - incognito: Incognito mode - no conversation or transaction data saved (optional)
+    
+    Incognito Mode:
+    - When incognito=true, no data is saved:
+      - No conversation history saved
+      - No transaction memory saved
+      - No thread metadata saved
+    - User can still get recommendations based on their registered cards
+    - Useful for privacy-sensitive queries
     """
-    if not graph:
+    if not graph or not graph_incognito:
         raise HTTPException(status_code=503, detail="Service not initialized")
     
-    # Generate or use provided thread_id
-    thread_id = request.thread_id if request.thread_id else str(uuid.uuid4())
+    # Select the appropriate graph based on incognito mode
+    active_graph = graph_incognito if request.incognito else graph
     
-    # Save or update user information
-    db = SessionLocal()
-    try:
-        # Check if user exists
-        existing_user = db.query(User).filter(User.user_id == request.user.id).first()
-        if not existing_user:
-            # Create new user
-            new_user = User(
-                user_id=request.user.id,
-                name=request.user.name,
-                email=request.user.email
-            )
-            db.add(new_user)
-            db.commit()
-            print(f"✅ Created new user: {request.user.name} ({request.user.email})")
-        else:
-            # Update user info if changed
-            if existing_user.name != request.user.name or existing_user.email != request.user.email:
-                existing_user.name = request.user.name
-                existing_user.email = request.user.email
+    # Generate or use provided thread_id
+    # In incognito mode, use a temporary thread_id that won't be saved
+    if request.incognito:
+        thread_id = f"incognito_{uuid.uuid4()}"
+    else:
+        thread_id = request.thread_id if request.thread_id else str(uuid.uuid4())
+    
+    # Save or update user information (unless incognito)
+    if not request.incognito:
+        db = SessionLocal()
+        try:
+            # Check if user exists
+            existing_user = db.query(User).filter(User.user_id == request.user.id).first()
+            if not existing_user:
+                # Create new user
+                new_user = User(
+                    user_id=request.user.id,
+                    name=request.user.name,
+                    email=request.user.email
+                )
+                db.add(new_user)
                 db.commit()
-                print(f"✅ Updated user info: {request.user.name}")
-    except Exception as e:
-        db.rollback()
-        print(f"❌ Error saving user: {str(e)}")
-    finally:
-        db.close()
+                print(f"✅ Created new user: {request.user.name} ({request.user.email})")
+            else:
+                # Update user info if changed
+                if existing_user.name != request.user.name or existing_user.email != request.user.email:
+                    existing_user.name = request.user.name
+                    existing_user.email = request.user.email
+                    db.commit()
+                    print(f"✅ Updated user info: {request.user.name}")
+        except Exception as e:
+            db.rollback()
+            print(f"❌ Error saving user: {str(e)}")
+        finally:
+            db.close()
     
     # Config with both thread_id (for conversation) and user_id (for LTM)
+    # Add incognito flag to config so nodes can check it
     config = {
         "configurable": {
             "thread_id": thread_id,
-            "user_id": request.user.id  # Use actual user ID for cross-session memory
+            "user_id": request.user.id,
+            "incognito": request.incognito  # Pass incognito mode to nodes
         }
     }
     
-    # Save thread metadata if it's a new thread
-    if request.thread_id:
+    # Save thread metadata if it's a new thread (skip in incognito mode)
+    if request.thread_id and not request.incognito:
         db = SessionLocal()
         try:
             # Check if thread already exists
@@ -234,6 +264,8 @@ async def chat(request: ChatRequest):
             traceback.print_exc()
         finally:
             db.close()
+    elif request.incognito:
+        print(f"🕵️ Incognito mode: No thread metadata saved for {thread_id}")
     
     try:
         # Process message through graph
@@ -243,7 +275,7 @@ async def chat(request: ChatRequest):
             # Streaming response
             async def event_generator():
                 try:
-                    for event in graph.stream(inputs, config=config):
+                    for event in active_graph.stream(inputs, config=config):
                         # Stream intermediate steps
                         for node_name, node_data in event.items():
                             if "messages" in node_data and node_data["messages"]:
@@ -252,12 +284,17 @@ async def chat(request: ChatRequest):
                                     yield f"data: {json.dumps({'type': 'progress', 'node': node_name, 'content': last_msg.content})}\n\n"
                     
                     # Get final response
-                    snapshot = graph.get_state(config)
-                    if snapshot.values and "messages" in snapshot.values:
-                        last_msg = snapshot.values["messages"][-1]
-                        response_text = last_msg.content
+                    if request.incognito:
+                        # In incognito mode, we can't use get_state, so we already have the response from stream
+                        response_text = last_msg.content if last_msg else "No response generated"
                     else:
-                        response_text = "No response generated"
+                        # Normal mode: use get_state
+                        snapshot = active_graph.get_state(config)
+                        if snapshot.values and "messages" in snapshot.values:
+                            last_msg = snapshot.values["messages"][-1]
+                            response_text = last_msg.content
+                        else:
+                            response_text = "No response generated"
                     
                     # Send final response
                     yield f"data: {json.dumps({'type': 'final', 'response': response_text, 'thread_id': thread_id})}\n\n"
@@ -269,21 +306,37 @@ async def chat(request: ChatRequest):
         
         else:
             # Non-streaming response (original behavior)
-            for event in graph.stream(inputs, config=config):
-                pass  # Process all events
+            final_state = None
+            for event in active_graph.stream(inputs, config=config):
+                # Keep track of the last state
+                final_state = event
             
             # Get final response
-            snapshot = graph.get_state(config)
-            
-            if snapshot.values and "messages" in snapshot.values:
-                last_msg = snapshot.values["messages"][-1]
-                response_text = last_msg.content
+            # In incognito mode (no checkpointer), get_state won't work, so use final_state from stream
+            if request.incognito and final_state:
+                # Extract response from final state
+                for node_name, node_data in final_state.items():
+                    if "messages" in node_data and node_data["messages"]:
+                        last_msg = node_data["messages"][-1]
+                        response_text = last_msg.content
+                        break
+                else:
+                    response_text = "No response generated"
             else:
-                response_text = "No response generated"
+                # Normal mode: use get_state
+                snapshot = active_graph.get_state(config)
+                
+                if snapshot.values and "messages" in snapshot.values:
+                    last_msg = snapshot.values["messages"][-1]
+                    response_text = last_msg.content
+                else:
+                    response_text = "No response generated"
             
             return ChatResponse(response=response_text, thread_id=thread_id)
     
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Error processing message: {str(e)}")
 
 @app.get("/user/{user_id}/threads", response_model=ThreadListDetailedResponse)

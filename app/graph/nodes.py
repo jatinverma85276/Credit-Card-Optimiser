@@ -461,11 +461,13 @@ def transaction_parser_node(state: GraphState, config: RunnableConfig):
         raw_text
     ])
 
-    # --- 🧠 NEW: VECTOR MEMORY INJECTION ---
-    if parsed_txn:
+    # --- 🧠 VECTOR MEMORY INJECTION (Skip in incognito mode) ---
+    incognito = config.get("configurable", {}).get("incognito", False)
+    
+    if parsed_txn and not incognito:
         try:
-            # Get the Thread ID (User ID)
-            user_id = config.get("configurable", {}).get("thread_id", "default")
+            # Get the user ID
+            user_id = config.get("configurable", {}).get("user_id", "default")
             # Save to Postgres Vector DB
             save_transaction_memory(
                 user_id=user_id,
@@ -479,6 +481,8 @@ def transaction_parser_node(state: GraphState, config: RunnableConfig):
         except Exception as e:
             # CRITICAL: Do not crash the flow if DB save fails
             print(f"⚠️ Memory Save Failed: {e}")
+    elif incognito:
+        print(f"🕵️ Incognito mode: Transaction memory not saved")
     # ---------------------------------------
 
     return {

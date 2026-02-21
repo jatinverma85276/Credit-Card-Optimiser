@@ -30,6 +30,16 @@ llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.2)
 # Memory Retrieval Node
 # -------------------------
 def memory_retrieval_node(state: GraphState, config: RunnableConfig):
+    # Check if incognito mode
+    incognito = config.get("configurable", {}).get("incognito", False)
+    
+    if incognito:
+        print(f"🕵️ Incognito mode: Skipping memory retrieval")
+        return {
+            **state,
+            "memory_context": ""  # Empty context in incognito mode
+        }
+    
     # Use global user_id for cross-session memory, fallback to thread_id
     user_id = config.get("configurable", {}).get("user_id") or config.get("configurable", {}).get("thread_id")
     last_message = state["messages"][-1].content
@@ -93,6 +103,13 @@ Return valid JSON.
 """
 
 def profiler_node(state: GraphState, config: RunnableConfig):
+    # Check if incognito mode
+    incognito = config.get("configurable", {}).get("incognito", False)
+    
+    if incognito:
+        print(f"🕵️ Incognito mode: Skipping profiler (no memory extraction)")
+        return state  # Pass through without extracting/saving memories
+    
     # Use global user_id for cross-session memory, fallback to thread_id
     user_id = config.get("configurable", {}).get("user_id") or config.get("configurable", {}).get("thread_id", "default")
     print(f"🧠 Profiler checking for memories - user_id: {user_id}")
