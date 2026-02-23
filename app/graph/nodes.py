@@ -783,16 +783,51 @@ def decision_node(state: GraphState) -> GraphState:
     points = round(best_entry["points"], 2)
     multiplier = best_entry["multiplier"]
     category = best_entry["category"]
+    
+    # Calculate point value (assuming 1 point = ₹0.25 average redemption value)
+    estimated_value = round(points * 0.25, 2)
+    
+    # Get other cards for comparison
+    other_cards = [b for b in breakdown if b["card_name"] != best_card.card_name]
+    other_cards_sorted = sorted(other_cards, key=lambda x: x["points"], reverse=True)[:2]
+    
+    # Build comparison text
+    comparison_text = ""
+    if other_cards_sorted:
+        comparison_text = "\n\n📊 **Comparison with other cards:**\n"
+        for card in other_cards_sorted:
+            comparison_text += f"• {card['card_name']}: {round(card['points'], 2)} points ({card['multiplier']}x)\n"
+    
+    # Build reward program info
+    reward_info = ""
+    if best_card.reward_program_name:
+        reward_info = f"\n💎 **Reward Program:** {best_card.reward_program_name}"
+    
+    # Build key benefits
+    benefits_text = ""
+    if best_card.key_benefits and len(best_card.key_benefits) > 0:
+        benefits_text = "\n\n✨ **Additional Benefits:**\n"
+        for benefit in best_card.key_benefits[:3]:  # Show top 3 benefits
+            benefits_text += f"• {benefit}\n"
 
     response = f"""
 💳 **Best Card Recommendation**
 
 Use **{best_card.card_name}** for this transaction at **{merchant}**.
 
-🎯 You'll earn approximately **{points} reward points**  
-⚡ Reward Rate: **{multiplier}x** ({category})
+📝 **Transaction Summary:**
+• Spending: ₹{amount:,.2f}
+• Points Earned: **{points} points**
+• Reward Rate: **{multiplier}x** ({category})
+• Estimated Value: ~₹{estimated_value} worth of rewards{reward_info}
 
-Smart choice for maximizing rewards!
+🎯 **How to Use Your Rewards:**
+• Redeem for statement credit or cashback
+• Convert to airline miles for flights
+• Use for shopping vouchers or gift cards
+• Book hotels through reward portal{comparison_text}{benefits_text}
+
+💡 **Smart Tip:** Always check for ongoing merchant offers to stack additional discounts on top of your rewards!
 """
 
     return {
@@ -873,35 +908,83 @@ def llm_recommendation_node(state: GraphState) -> GraphState:
     if not breakdown_text:
         breakdown_text = "No cards matched for this transaction."
 
-    # 3. The "Comparison-First" Prompt
+    # 3. Get best card details
+    best_card = state.get("best_card")
+    best_entry = None
+    if best_card:
+        best_entry = next(
+            (b for b in breakdown if b["card_name"] == best_card.card_name),
+            None
+        )
+    
+    # 4. Enhanced Comprehensive Prompt
     prompt = f"""
-    You are a Credit Card Strategy Expert.
+    You are a Credit Card Strategy Expert providing comprehensive financial advice.
 
     ### LONG-TERM MEMORY (PAST CONTEXT)
-    {ltm_context}  <-- ✅ INJECTED HERE (If empty, this line is blank)
+    {ltm_context}
 
-    ### DATA (Calculated Rewards)
+    ### TRANSACTION DETAILS
+    - Merchant: {txn.merchant if txn else 'Unknown'}
+    - Amount: ₹{txn.amount if txn else 0:,.2f}
+    - Category: {txn.category if txn and txn.category else 'General'}
+
+    ### REWARD CALCULATIONS (ALL CARDS)
     {breakdown_text}
 
-    ### TRANSACTION
-    Merchant: {txn.merchant if txn else 'Unknown'} | Amount: ₹{txn.amount if txn else 0}
+    ### BEST CARD IDENTIFIED
+    {f"Card: {best_card.card_name}" if best_card else "No best card identified"}
+    {f"Points Earned: {round(best_entry['points'], 2)}" if best_entry else ""}
+    {f"Reward Rate: {best_entry['multiplier']}x ({best_entry['category']})" if best_entry else ""}
+    {f"Reward Program: {best_card.reward_program_name}" if best_card and best_card.reward_program_name else ""}
 
     ### USER QUESTION
     "{user_query}"
 
-    ### STRICT RESPONSE RULES:
-    1. **IF "COMPARE" IS ASKED:** - DO NOT simply list all cards.
-       - Identify the SPECIFIC cards the user asked about (e.g., "IDFC" and "Flipkart").
-       - Create a "Head-to-Head" comparison for ONLY those cards.
-       - Example: "The Flipkart SBI earns 750 pts (7.5x), whereas IDFC Select earns only 300 pts (3x). This makes Flipkart 2.5x more rewarding."
+    ### YOUR TASK - PROVIDE A COMPREHENSIVE RECOMMENDATION
 
-    2. **IF "BEST CARD" IS ASKED:**
-       - Announce the winner clearly.
-       - Briefly list the runners-up.
+    **Structure your response as follows:**
 
-    3. **Tone:**
-       - Be direct. Avoid generic filler like "Based on your transaction..."
-       - Start immediately with the answer.
+    1. **BEST CARD RECOMMENDATION** (Clear winner announcement)
+       - State the recommended card name
+       - Explain why it's the best choice for this transaction
+
+    2. **TRANSACTION SUMMARY**
+       - Spending: ₹{txn.amount if txn else 0:,.2f} at {txn.merchant if txn else 'Unknown'}
+       - Points/Cashback you'll earn: [Calculate and state clearly]
+       - Reward rate applied: [State the multiplier and category]
+
+    3. **HOW TO USE YOUR REWARDS**
+       - Explain what the reward program is (e.g., "HDFC Rewards Points", "Cashback", etc.)
+       - Provide 3-4 practical ways to redeem/use these points:
+         * Example: "Convert to airline miles for flights"
+         * Example: "Redeem for statement credit"
+         * Example: "Use for shopping vouchers"
+         * Example: "Book hotels through reward portal"
+       - Mention typical redemption value (e.g., "1 point = ₹0.25 value")
+
+    4. **COMPARISON WITH OTHER CARDS** (Brief)
+       - Show how much you'd earn with 2nd and 3rd best cards
+       - Highlight the difference in rewards
+       - Example: "With Card X you'd earn only 500 points vs 1000 points with recommended card"
+
+    5. **ADDITIONAL BENEFITS** (If applicable)
+       - Mention any special benefits for this merchant/category
+       - Example: "This card also offers lounge access" or "No foreign transaction fees"
+       - Keep it relevant to the transaction
+
+    6. **SMART TIP** (Optional but valuable)
+       - Provide one actionable tip related to maximizing rewards
+       - Example: "Tip: Combine this with ongoing merchant offers for extra 10% off"
+
+    ### RESPONSE RULES:
+    - Be conversational but professional
+    - Use emojis sparingly (💳 🎯 ⚡ ✨) for visual appeal
+    - Format with clear sections and bullet points
+    - Make numbers stand out (use ₹ symbol, round appropriately)
+    - If comparing specific cards (user asks "compare X vs Y"), focus on those cards
+    - Keep total response under 400 words but comprehensive
+    - Be specific about redemption options based on the reward program name
     """
 
     # 4. Invoke LLM
