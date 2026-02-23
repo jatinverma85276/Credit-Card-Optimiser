@@ -203,8 +203,11 @@ async def chat(request: ChatRequest):
     if not request.incognito:
         db = SessionLocal()
         try:
-            # Check if user exists
-            existing_user = db.query(User).filter(User.user_id == request.user.id).first()
+            # Check if user exists by user_id OR email
+            existing_user = db.query(User).filter(
+                (User.user_id == request.user.id) | (User.email == request.user.email)
+            ).first()
+            
             if not existing_user:
                 # Create new user
                 new_user = User(

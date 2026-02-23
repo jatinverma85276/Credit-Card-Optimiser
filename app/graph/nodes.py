@@ -16,7 +16,7 @@ from app.db.card_repository import add_card
 from langchain_core.runnables import RunnableConfig
 from app.services.memory_service import save_transaction_memory
 from app.utils.CONSTANTS import FINANCE_KEYWORDS
-
+from app.tools.web_search import search_product_price, extract_price_from_search
 load_dotenv()
 
 llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.2)
@@ -437,7 +437,7 @@ def add_card_node(state: GraphState, config: RunnableConfig) -> GraphState:
 # Transaction Parser Agent
 # -------------------------
 TRANSACTION_PARSER_PROMPT = """
-You are a financial transaction extraction engine.
+You are a financial transaction extraction engine with web search capabilities.
 
 Extract the transaction into STRICT JSON.
 
@@ -448,18 +448,71 @@ Rules:
 - Infer category only if obvious (Swiggy → food, Uber → travel).
 - Return valid JSON only.
 - Use null if unknown.
+
+IMPORTANT: If the user mentions a product (like iPhone, MacBook, laptop) but doesn't provide the price,
+you MUST use the search_product_price tool to find the current price before returning the transaction.
+
+Example:
+User: "I want to buy an iPhone 15"
+Action: Call search_product_price("iPhone 15 price in India")
+Result: Extract price from search results and set amount field
 """
 
 def transaction_parser_node(state: GraphState, config: RunnableConfig):
-
     raw_text = state["messages"][-1].content.strip()
 
+    # First, parse the transaction to see if amount is missing
     structured_llm = llm.with_structured_output(Transaction)
-
-    parsed_txn: Transaction = structured_llm.invoke([
+    parsed_txn = structured_llm.invoke([
         SystemMessage(content=TRANSACTION_PARSER_PROMPT),
         raw_text
     ])
+    
+    # Check if amount is missing or zero
+    if parsed_txn and (parsed_txn.amount is None or parsed_txn.amount == 0):
+        print(f"💰 Amount not provided. Attempting to search for price...")
+        
+        # Create LLM with tool binding to decide if search is needed
+        llm_with_tools = llm.bind_tools([search_product_price])
+        
+        # Ask LLM if it should search for price
+        decision_prompt = f"""
+Based on this user message, should we search for the product price online?
+
+User message: "{raw_text}"
+
+If the message mentions a specific product (like iPhone, MacBook, laptop, etc.) that typically has a known market price, you should use the search_product_price tool.
+
+If it's a generic expense or service (like "food", "groceries", "uber ride") without a specific product, don't search.
+"""
+        
+        response = llm_with_tools.invoke([
+            SystemMessage(content="You are a smart assistant that decides when to search for product prices."),
+            decision_prompt
+        ])
+        
+        # Check if LLM wants to use the tool
+        if response.tool_calls:
+            print(f"🤖 LLM decided to search for price...")
+            for tool_call in response.tool_calls:
+                if tool_call['name'] == 'search_product_price':
+                    product_name = tool_call['args'].get('product_name', raw_text)
+                    print(f"🔍 Searching for: {product_name}")
+                    
+                    try:
+                        # Execute the search
+                        search_results = search_product_price.invoke({"product_name": product_name})
+                        estimated_price = extract_price_from_search(search_results, product_name)
+                        
+                        if estimated_price > 0:
+                            print(f"✅ Found estimated price: ₹{estimated_price}")
+                            parsed_txn.amount = estimated_price
+                        else:
+                            print(f"⚠️ Could not find price online. Using amount = 0")
+                    except Exception as e:
+                        print(f"⚠️ Web search failed: {e}")
+        else:
+            print(f"🤖 LLM decided search is not needed for this query")
 
     # --- 🧠 VECTOR MEMORY INJECTION (Skip in incognito mode) ---
     incognito = config.get("configurable", {}).get("incognito", False)
@@ -600,7 +653,11 @@ def reward_calculation_node(state: GraphState) -> GraphState:
     for card in cards:
         # --- 1. EXCLUSIONS ---
         exclusions = [e.lower() for e in card.excluded_categories] if card.excluded_categories else []
-        if txn.category.lower() in exclusions or merchant_input in exclusions:
+        
+        # Handle None category
+        category_lower = txn.category.lower() if txn.category else ""
+        
+        if category_lower in exclusions or merchant_input in exclusions:
             breakdown.append({
                 "card_name": card.card_name,
                 "points": 0,
