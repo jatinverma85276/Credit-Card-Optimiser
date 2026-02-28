@@ -13,6 +13,7 @@ pgvector
 fastapi
 uvicorn[standard]
 passlib[bcrypt]
+bcrypt==4.0.1
 python-multipart
 email-validator
 tavily-python
