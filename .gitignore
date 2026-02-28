@@ -1,5 +1,38 @@
+# Virtual environments
 .venv
 myenv
+venv/
+env/
+
+# Environment variables
 .env
+.env.local
+.env.production
+
+# Python
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+.Python
+
+# Database files (local only)
+*.db
+*.sqlite
+*.sqlite3
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Railway
+.railway/
