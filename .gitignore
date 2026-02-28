@@ -34,5 +34,5 @@ Thumbs.db
 # Logs
 *.log
 
-# Railway
-.railway/
+# Render
+.render/

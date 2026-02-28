@@ -1,0 +1,34 @@
+services:
+  - type: web
+    name: credit-card-optimizer
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port 10000
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: GOOGLE_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: MODEL
+        value: gemini/gemini-2.0-flash-thinking-exp-01-21
+      - key: LANGSMITH_TRACING
+        value: true
+      - key: LANGSMITH_ENDPOINT
+        value: https://api.smith.langchain.com
+      - key: LANGSMITH_API_KEY
+        sync: false
+      - key: LANGSMITH_PROJECT
+        value: Credit Card
+      - key: DATABASE_URL
+        fromDatabase:
+          name: credit-card-db
+          property: connectionString
+
+databases:
+  - name: credit-card-db
+    databaseName: credit_card_ai
+    user: credit_card_user
