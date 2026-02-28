@@ -15,6 +15,7 @@ from app.schemas.credit_card import CreditCard, RewardRule, Milestone, Eligibili
 from sqlalchemy import text
 import json
 from typing import List
+from app.graph.nodes import llm  # Import LLM for card parsing
 
 # Global graph instances
 graph = None  # Graph with memory (normal mode)
@@ -585,6 +586,124 @@ async def get_user_cards_endpoint(user_id: str):
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Error retrieving cards: {str(e)}")
+
+class AddCardRequest(BaseModel):
+    bank_name: str
+    card_name: str
+    user_id: str
+
+class AddCardResponse(BaseModel):
+    success: bool
+    message: str
+    card_details: dict | None = None
+
+@app.post("/add_card", response_model=AddCardResponse)
+async def add_card_endpoint(request: AddCardRequest):
+    """
+    Add a credit card by searching for its details online
+    
+    Parameters:
+    - bank_name: Name of the bank/issuer (e.g., "HDFC", "ICICI", "American Express")
+    - card_name: Name of the card (e.g., "Regalia Gold", "Amazon Pay", "Platinum Travel")
+    - user_id: User ID to associate the card with
+    
+    This endpoint will:
+    1. Search for card details online using web search
+    2. Parse and extract structured card information
+    3. Save the card to the database
+    """
+    try:
+        from app.tools.web_search import search_product_price
+        from langchain_core.messages import SystemMessage
+        
+        # Step 1: Search for card details online
+        search_query = f"{request.bank_name} {request.card_name} credit card features benefits rewards India"
+        print(f"🔍 Searching for: {search_query}")
+        
+        search_results = search_product_price.invoke({"product_name": search_query})
+        
+        if not search_results or "Error" in search_results:
+            raise HTTPException(
+                status_code=404, 
+                detail=f"Could not find details for {request.bank_name} {request.card_name}. Please try with more specific card name or add details manually."
+            )
+        
+        print(f"✅ Found search results (length: {len(search_results)})")
+        
+        # Step 2: Parse the card details using the card parser
+        structured_llm = llm.with_structured_output(CreditCard)
+        
+        CARD_EXTRACTION_PROMPT = """
+You are a STRICT Financial Data Extractor. Your goal is to map unstructured text to a structured schema with 100% fidelity to the source text.
+
+### CORE PHILOSOPHY:
+1. **NO INFERENCE:** If the user says "5% on travel", extract exactly that. Do NOT infer "Foreign Transaction Fee Waiver" unless explicitly stated.
+2. **NO AUTOFILL:** Do not fill in generic data (like "18 years old" or "Indian Resident") unless the text explicitly mentions these criteria.
+3. **NO GUESSING:** If a field (like `annual_fee`) is missing from the text, return `null`. Do not guess based on similar cards.
+
+### DATA HANDLING RULES:
+1. **Analyze Footnotes:** Critical data (caps, specific exclusions) is often hidden in footnotes (e.g., "1", "2"). You MUST integrate this data into the main fields.
+2. **Split Reward Buckets:** If a single category (like "10X Rewards") has different caps for different merchant groups (e.g., "Group A capped at 500, Group B capped at 500"), create **separate** `RewardRule` entries.
+3. **Capture Eligibility:** Extract income, age, and location constraints into `eligibility_criteria` ONLY if explicitly mentioned.
+4. **Milestones:** Map "Spend X to get Y" logic to `milestone_benefits`.
+5. **Exclusions:** Be specific. If EMI is excluded only at "Point of Sale", record that nuance.
+
+### VALIDATION & FAILURE HANDLING:
+- **`extracted_from_user` Flag:** Set to `true` IF the text contains specific, identifiable credit card terms (e.g., specific reward rates, fee amounts, or unique benefit names).
+  Set to `false` IF the input is vague, generic, or lacks sufficient detail to identify a specific financial product.
+
+### OUTPUT FORMAT:
+Return strictly valid JSON matching the provided schema.
+"""
+        
+        card_data: CreditCard = structured_llm.invoke([
+            SystemMessage(content=CARD_EXTRACTION_PROMPT),
+            f"Extract credit card details from this search result:\n\n{search_results}"
+        ])
+        
+        if not card_data.extracted_from_user:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Could not extract valid card details from search results. The information found was too generic or incomplete. Please try adding the card manually with full details."
+            )
+        
+        print(f"✅ Parsed card: {card_data.card_name}")
+        
+        # Step 3: Save to database
+        db = SessionLocal()
+        try:
+            from app.db.card_repository import add_card
+            db_card = add_card(db, card_data, request.user_id)
+            
+            # Convert to dict for response
+            card_dict = {
+                "id": db_card.id,
+                "card_name": db_card.card_name,
+                "issuer": db_card.issuer,
+                "card_type": db_card.card_type,
+                "annual_fee": db_card.annual_fee,
+                "reward_program_name": db_card.reward_program_name,
+                "reward_rules": db_card.reward_rules,
+                "key_benefits": db_card.key_benefits
+            }
+            
+            return AddCardResponse(
+                success=True,
+                message=f"Successfully added {card_data.card_name} to your portfolio",
+                card_details=card_dict
+            )
+        finally:
+            db.close()
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Error adding card: {str(e)}"
+        )
 
 @app.get("/health")
 async def health_check():
