@@ -1,14 +1,8 @@
-from sqlalchemy import Column, Integer, String, Text, JSON, Float, DateTime
-from app.db.database import Base
-from sqlalchemy.sql import func
-from pgvector.sqlalchemy import Vector  # <--- The Bridge between Python & Postgres
-# from pgvector.sqlalchemy import Vector  # <--- The magic import
-
 from sqlalchemy import Column, Integer, String, Text, JSON, Float, DateTime, Boolean
 from app.db.database import Base
 from sqlalchemy.sql import func
 from pgvector.sqlalchemy import Vector  # <--- The Bridge between Python & Postgres
-# from pgvector.sqlalchemy import Vector  # <--- The magic import
+
 
 class UserAuth(Base):
     __tablename__ = "user_auth"
@@ -100,23 +94,12 @@ class UserMemory(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
-class User(Base):
-    __tablename__ = "users"
-
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(String, unique=True, index=True)  # External user ID from frontend
-    name = Column(String)
-    email = Column(String, unique=True, index=True)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
-
-
 class ChatThread(Base):
     __tablename__ = "chat_threads"
 
     id = Column(Integer, primary_key=True, index=True)
     thread_id = Column(String, unique=True, index=True)
-    user_id = Column(String, index=True)  # Link to User
+    user_id = Column(String, index=True)  # Link to UserAuth
     thread_name = Column(String)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

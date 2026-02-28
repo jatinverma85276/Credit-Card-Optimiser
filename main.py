@@ -8,10 +8,13 @@ from langchain_core.messages import HumanMessage, AIMessage
 from app.graph.graph import build_graph
 from langgraph.checkpoint.postgres import PostgresSaver
 from app.db.database import DATABASE_URL, engine, SessionLocal
-from app.db.models import ChatThread, User, UserAuth
+from app.db.models import ChatThread, UserAuth
 from app.services.auth_service import create_user, authenticate_user
+from app.db.card_repository import get_user_cards
+from app.schemas.credit_card import CreditCard, RewardRule, Milestone, Eligibility
 from sqlalchemy import text
 import json
+from typing import List
 
 # Global graph instances
 graph = None  # Graph with memory (normal mode)
@@ -107,6 +110,27 @@ class AuthResponse(BaseModel):
     name: str
     email: str
     message: str
+
+class CardResponse(BaseModel):
+    id: int
+    card_name: str
+    issuer: str
+    card_type: str
+    annual_fee: str
+    fee_waiver_condition: str | None
+    welcome_bonus: str | None
+    liability_policy: str | None
+    reward_program_name: str | None
+    reward_rules: List[dict]
+    milestone_benefits: List[dict]
+    eligibility_criteria: dict | None
+    excluded_categories: List[str]
+    key_benefits: List[str]
+
+class UserCardsResponse(BaseModel):
+    user_id: str
+    cards: List[CardResponse]
+    count: int
 
 @app.post("/auth/signup", response_model=AuthResponse)
 async def signup(request: SignupRequest):
@@ -204,30 +228,22 @@ async def chat(request: ChatRequest):
         db = SessionLocal()
         try:
             # Check if user exists by user_id OR email
-            existing_user = db.query(User).filter(
-                (User.user_id == request.user.id) | (User.email == request.user.email)
+            existing_user = db.query(UserAuth).filter(
+                (UserAuth.user_id == request.user.id) | (UserAuth.email == request.user.email)
             ).first()
             
             if not existing_user:
-                # Create new user
-                new_user = User(
-                    user_id=request.user.id,
-                    name=request.user.name,
-                    email=request.user.email
-                )
-                db.add(new_user)
-                db.commit()
-                print(f"✅ Created new user: {request.user.name} ({request.user.email})")
+                # User should already exist from signup, but log if not found
+                print(f"⚠️ User not found in user_auth: {request.user.id} ({request.user.email})")
             else:
                 # Update user info if changed
-                if existing_user.name != request.user.name or existing_user.email != request.user.email:
+                if existing_user.name != request.user.name:
                     existing_user.name = request.user.name
-                    existing_user.email = request.user.email
                     db.commit()
                     print(f"✅ Updated user info: {request.user.name}")
         except Exception as e:
             db.rollback()
-            print(f"❌ Error saving user: {str(e)}")
+            print(f"❌ Error updating user: {str(e)}")
         finally:
             db.close()
     
@@ -382,7 +398,7 @@ async def get_user(user_id: str):
     try:
         db = SessionLocal()
         try:
-            user = db.query(User).filter(User.user_id == user_id).first()
+            user = db.query(UserAuth).filter(UserAuth.user_id == user_id).first()
             if not user:
                 raise HTTPException(status_code=404, detail=f"User {user_id} not found")
             
@@ -525,6 +541,50 @@ async def delete_thread(thread_id: str):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error deleting thread: {str(e)}")
+
+@app.get("/user/{user_id}/cards", response_model=UserCardsResponse)
+async def get_user_cards_endpoint(user_id: str):
+    """
+    Get all credit cards for a specific user
+    """
+    try:
+        db = SessionLocal()
+        try:
+            # Fetch cards from database
+            cards = get_user_cards(db, user_id)
+            
+            # Convert to response format
+            card_responses = [
+                CardResponse(
+                    id=card.id,
+                    card_name=card.card_name,
+                    issuer=card.issuer,
+                    card_type=card.card_type,
+                    annual_fee=card.annual_fee,
+                    fee_waiver_condition=card.fee_waiver_condition,
+                    welcome_bonus=card.welcome_bonus,
+                    liability_policy=card.liability_policy,
+                    reward_program_name=card.reward_program_name,
+                    reward_rules=card.reward_rules or [],
+                    milestone_benefits=card.milestone_benefits or [],
+                    eligibility_criteria=card.eligibility_criteria,
+                    excluded_categories=card.excluded_categories or [],
+                    key_benefits=card.key_benefits or []
+                )
+                for card in cards
+            ]
+            
+            return UserCardsResponse(
+                user_id=user_id,
+                cards=card_responses,
+                count=len(card_responses)
+            )
+        finally:
+            db.close()
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Error retrieving cards: {str(e)}")
 
 @app.get("/health")
 async def health_check():
