@@ -211,7 +211,7 @@ If you have existing users and want to migrate their data:
 ```python
 # migration_script.py
 from app.db.database import SessionLocal
-from app.db.models import User, CreditCardModel, ChatThread
+from app.db.models import UserAuth, CreditCardModel, ChatThread
 
 db = SessionLocal()
 
