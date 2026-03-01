@@ -34,6 +34,15 @@ async def lifespan(app: FastAPI):
     print("🔧 Initializing checkpoint storage...")
     memory_context = PostgresSaver.from_conn_string(DATABASE_URL)
     memory = memory_context.__enter__()  # Get the actual saver instance
+    
+    # Force checkpoint table creation by calling setup
+    try:
+        print("🔧 Setting up checkpoint tables...")
+        memory.setup()
+        print("✅ Checkpoint tables created/verified!")
+    except Exception as e:
+        print(f"⚠️  Warning during checkpoint setup: {e}")
+    
     print("✅ Checkpoint storage initialized!")
     
     # Build graph with memory for normal mode
