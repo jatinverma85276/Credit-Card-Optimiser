@@ -26,20 +26,33 @@ memory = None
 async def lifespan(app: FastAPI):
     """Lifespan event handler for startup and shutdown"""
     global graph, graph_incognito, memory
+    
     # Startup
+    print("🚀 Starting Credit Card Optimizer API...")
+    
+    # Initialize PostgresSaver - this creates checkpoint tables if they don't exist
+    print("🔧 Initializing checkpoint storage...")
     memory_context = PostgresSaver.from_conn_string(DATABASE_URL)
     memory = memory_context.__enter__()  # Get the actual saver instance
+    print("✅ Checkpoint storage initialized!")
     
     # Build graph with memory for normal mode
+    print("🔧 Building graph with memory...")
     graph = build_graph(memory)
     
     # Build graph without memory for incognito mode
+    print("🔧 Building incognito graph...")
     graph_incognito = build_graph(None)
     
+    print("✅ API ready to serve requests!")
+    
     yield
+    
     # Shutdown
+    print("🛑 Shutting down...")
     if memory_context:
         memory_context.__exit__(None, None, None)  # Exit the context manager
+    print("✅ Shutdown complete!")
 
 app = FastAPI(title="Credit Card Optimizer API", lifespan=lifespan)
 
