@@ -726,7 +726,8 @@ async def health_check():
     health_status = {
         "status": "healthy",
         "database": "disconnected",
-        "graph": "not_initialized"
+        "graph": "not_initialized",
+        "checkpoint_tables": "unknown"
     }
     
     # Check database connection
@@ -734,6 +735,21 @@ async def health_check():
         with engine.connect() as conn:
             conn.execute(text("SELECT 1"))
         health_status["database"] = "connected"
+        
+        # Check if checkpoint tables exist
+        try:
+            result = conn.execute(text("""
+                SELECT table_name 
+                FROM information_schema.tables 
+                WHERE table_schema = 'public' 
+                AND table_name IN ('checkpoints', 'checkpoint_blobs', 'checkpoint_writes')
+                ORDER BY table_name
+            """))
+            tables = [row[0] for row in result]
+            health_status["checkpoint_tables"] = tables if tables else "missing"
+        except Exception as e:
+            health_status["checkpoint_tables"] = f"error: {str(e)}"
+            
     except Exception as e:
         health_status["status"] = "unhealthy"
         health_status["database"] = f"error: {str(e)}"
