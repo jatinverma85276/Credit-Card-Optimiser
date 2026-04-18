@@ -1,14 +1,14 @@
 """
 Web search tool for finding product prices using Tavily API
 """
-from langchain_community.tools.tavily_search import TavilySearchResults
+from langchain_tavily import TavilySearch
 from langchain_core.tools import tool
 import re
 import os
 
 # Initialize Tavily search with API key
 os.environ["TAVILY_API_KEY"] = "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"
-tavily_search = TavilySearchResults(max_results=5)
+tavily_search = TavilySearch(max_results=5)
 
 @tool
 def search_product_price(product_name: str) -> str:
